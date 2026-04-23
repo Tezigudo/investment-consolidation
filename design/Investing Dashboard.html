@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Consolidate — Investing Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<style>
+  html, body { margin: 0; padding: 0; min-height: 100%; }
+  body { background: #0b0c0f; transition: background .15s; }
+  body[data-theme="light"] { background: #faf9f6; }
+
+  .app-root { min-height: 100vh; }
+
+  /* Floating controls (gear + variation switch) */
+  .float-controls {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 1001;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-end;
+  }
+  .gear-btn {
+    width: 40px; height: 40px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 6px 20px rgba(0,0,0,.2);
+    transition: transform .15s, background .12s;
+  }
+  .gear-btn:hover { background: var(--surface-2); transform: rotate(20deg); }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="data.jsx"></script>
+<script type="text/babel" src="charts.jsx"></script>
+<script type="text/babel" src="price-modal.jsx"></script>
+<script type="text/babel" src="variation-a.jsx"></script>
+<script type="text/babel" src="variation-b.jsx"></script>
+
+<script type="text/babel">
+const STORAGE_KEY = 'consolidate.prefs.v1';
+
+function loadPrefs() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return { currency: 'THB', dark: true, privacy: false, variant: 'B' };
+}
+
+function App() {
+  const initial = loadPrefs();
+  const [currency, setCurrency] = React.useState(initial.currency);
+  const [dark, setDark]         = React.useState(initial.dark);
+  const [privacy, setPrivacy]   = React.useState(initial.privacy);
+  const [variant, setVariant]   = React.useState(initial.variant);
+  const [tweaksOpen, setTweaksOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ currency, dark, privacy, variant }));
+    } catch {}
+    document.body.dataset.theme = dark ? 'dark' : 'light';
+  }, [currency, dark, privacy, variant]);
+
+  const common = { currency, setCurrency, dark, privacy };
+  const Variation = variant === 'A' ? VariationA : VariationB;
+
+  return (
+    <div className="app-root" style={themeVars(dark)}>
+      <Variation {...common} />
+
+      <div className="float-controls" style={themeVars(dark)}>
+        {tweaksOpen && (
+          <div className="tweaks-panel" style={themeVars(dark)}>
+            <div className="t-title">Tweaks</div>
+            <div className="t-row">
+              <span>View</span>
+              <div className="t-seg">
+                <button data-active={variant === 'A'} onClick={() => setVariant('A')}>A · Focus</button>
+                <button data-active={variant === 'B'} onClick={() => setVariant('B')}>B · Grid</button>
+              </div>
+            </div>
+            <div className="t-row">
+              <span>Currency</span>
+              <div className="t-seg">
+                {['USD', 'THB', 'USDT'].map(c => (
+                  <button key={c} data-active={currency === c} onClick={() => setCurrency(c)}>{c}</button>
+                ))}
+              </div>
+            </div>
+            <div className="t-row">
+              <span>Theme</span>
+              <div className="t-seg">
+                <button data-active={dark} onClick={() => setDark(true)}>Dark</button>
+                <button data-active={!dark} onClick={() => setDark(false)}>Light</button>
+              </div>
+            </div>
+            <div className="t-row">
+              <span>Privacy mode</span>
+              <div className="t-seg">
+                <button data-active={privacy} onClick={() => setPrivacy(true)}>On</button>
+                <button data-active={!privacy} onClick={() => setPrivacy(false)}>Off</button>
+              </div>
+            </div>
+          </div>
+        )}
+        <button
+          className="gear-btn"
+          onClick={() => setTweaksOpen(o => !o)}
+          title={tweaksOpen ? 'Hide settings' : 'Show settings'}
+          aria-label="Toggle settings"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+{
+  "name": "investing-consolidate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal consolidated investing dashboard — DIME + Binance + bank, with true-baht PNL.",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun run --filter './apps/*' dev",
+    "dev:api": "bun run --filter @consolidate/api dev",
+    "dev:web": "bun run --filter @consolidate/web dev",
+    "build": "bun run build:api && bun run build:web",
+    "build:api": "bun run --filter @consolidate/api build",
+    "build:web": "bun run --filter @consolidate/web build",
+    "start": "bun run --filter @consolidate/api start",
+    "typecheck": "bun run --filter './apps/*' typecheck",
+    "typecheck:api": "bun run --filter @consolidate/api typecheck",
+    "typecheck:web": "bun run --filter @consolidate/web typecheck",
+    "import:dime": "bun run --filter @consolidate/api import:dime --"
+  },
+  "engines": {
+    "bun": ">=1.1",
+    "node": ">=20"
+  }
+}

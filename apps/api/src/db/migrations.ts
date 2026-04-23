@@ -91,6 +91,59 @@ const MIGRATIONS: Migration[] = [
       -- trades WHERE side='DIV' is the single source of truth.
     `,
   },
+  {
+    version: 2,
+    name: 'history_import',
+    up: `
+      -- Daily historical FX cache. Populated once via a bulk range fetch
+      -- from Yahoo THB=X; trade imports then look up by date locally.
+      -- date is YYYY-MM-DD UTC.
+      CREATE TABLE IF NOT EXISTS fx_daily (
+        pair   TEXT NOT NULL,
+        date   TEXT NOT NULL,
+        rate   REAL NOT NULL,
+        source TEXT,
+        PRIMARY KEY (pair, date)
+      );
+      CREATE INDEX IF NOT EXISTS idx_fx_daily_pair_date ON fx_daily(pair, date);
+
+      -- Daily historical crypto price cache (in USDT). Used to mark-to-
+      -- market Earn rewards at the moment of payout without calling
+      -- klines once per reward.
+      CREATE TABLE IF NOT EXISTS prices_daily (
+        asset  TEXT NOT NULL,
+        date   TEXT NOT NULL,
+        price_usd REAL NOT NULL,
+        source TEXT,
+        PRIMARY KEY (asset, date)
+      );
+
+      -- Per-endpoint sync cursors for the incremental Binance importer.
+      -- endpoint = 'myTrades:BTCUSDT' | 'deposits' | 'withdrawals' |
+      -- 'convert' | 'earn-rewards' | 'p2p' | 'fiat-orders' | ...
+      -- For id-based endpoints (myTrades), last_id is used.
+      -- For time-based endpoints, last_ts (ms) is used.
+      CREATE TABLE IF NOT EXISTS binance_sync_state (
+        endpoint    TEXT PRIMARY KEY,
+        last_id     INTEGER,
+        last_ts     INTEGER,
+        updated_at  INTEGER NOT NULL
+      );
+    `,
+  },
+  {
+    version: 3,
+    name: 'deposits_dedup',
+    up: `
+      -- The importer writes to deposits from several endpoints (crypto
+      -- deposit, P2P, fiat order, fiat payment). Each now stamps a
+      -- unique \`source\` string including the Binance record id so
+      -- ON CONFLICT DO NOTHING can suppress re-inserts across reruns
+      -- and overlapping cursor windows.
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_deposits_platform_source
+        ON deposits(platform, source);
+    `,
+  },
 ];
 
 export function runMigrations(db: Database) {

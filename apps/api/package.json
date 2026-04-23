@@ -10,7 +10,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "import:dime": "tsx src/cli/import-dime.ts"
+    "import:dime": "tsx src/cli/import-dime.ts",
+    "import:binance": "tsx src/cli/import-binance.ts"
   },
   "dependencies": {
     "@consolidate/shared": "*",

@@ -31,6 +31,25 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
   const [selected, setSelected] = useState<EnrichedPosition | null>(null);
   const [filter, setFilter] = useState<'All' | 'DIME' | 'Binance'>('All');
 
+  const t = snap?.totals.all;
+  // Synthesize a flat baseline series for the hero chart (true history
+  // would come from a snapshots table; omitted from MVP). Indexed to today.
+  const mockSeries = useMemo(() => {
+    if (!t) return [] as { t: number; value: number }[];
+    const base = currency === 'THB' ? t.costTHB : t.costUSD;
+    const end = currency === 'THB' ? t.marketTHB : t.marketUSD;
+    const out: { t: number; value: number }[] = [];
+    const days = 60;
+    const now = Date.now();
+    for (let i = 0; i < days; i++) {
+      const p = i / (days - 1);
+      const noise = Math.sin(i * 0.5) * 0.015 + Math.sin(i * 0.17) * 0.02;
+      out.push({ t: now - (days - 1 - i) * 86400000, value: base + (end - base) * p + end * noise });
+    }
+    out[out.length - 1].value = end;
+    return out;
+  }, [currency, t?.costTHB, t?.costUSD, t?.marketTHB, t?.marketUSD]);
+
   if (error) {
     return (
       <div style={{ padding: 40, color: 'var(--down)' }}>
@@ -39,11 +58,10 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
     );
   }
 
-  if (isLoading || !snap) {
+  if (isLoading || !snap || !t) {
     return <div style={{ padding: 40, color: 'var(--muted)' }}>Loading portfolio…</div>;
   }
 
-  const t = snap.totals.all;
   const usdthb = snap.fx.usdthb;
   const pnlCur = currency === 'THB' ? t.pnlTHB : t.pnlUSD;
 
@@ -59,24 +77,6 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
     value,
     color: SECTOR_COLORS[label] ?? 'var(--muted-2)',
   }));
-
-  // Synthesize a flat baseline series for the hero chart (true history
-  // would come from a snapshots table; omitted from MVP). Indexed to today.
-  const mockSeries = useMemo(() => {
-    const base = currency === 'THB' ? t.costTHB : t.costUSD;
-    const end = currency === 'THB' ? t.marketTHB : t.marketUSD;
-    const out: { t: number; value: number }[] = [];
-    const days = 60;
-    const now = Date.now();
-    for (let i = 0; i < days; i++) {
-      const p = i / (days - 1);
-      const noise = Math.sin(i * 0.5) * 0.015 + Math.sin(i * 0.17) * 0.02;
-      out.push({ t: now - (days - 1 - i) * 86400000, value: base + (end - base) * p + end * noise });
-    }
-    // Force exact match at end
-    out[out.length - 1].value = end;
-    return out;
-  }, [currency, t.costTHB, t.costUSD, t.marketTHB, t.marketUSD]);
 
   const filtered: (EnrichedPosition & { key: string })[] = [];
   if (filter !== 'Binance') snap.positions.dime.forEach((p) => filtered.push({ ...p, key: `DIME:${p.symbol}` }));

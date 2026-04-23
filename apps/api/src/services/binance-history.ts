@@ -5,58 +5,13 @@
 // response shape. The paginators below normalize those into async
 // generators that the importer can stream through.
 
-import crypto from 'node:crypto';
-import { config } from '../config.js';
+import { binanceSignedGet as signedGet } from './binance-http.js';
 
-const BASE = 'https://api.binance.com';
-
-function sign(qs: string, secret: string) {
-  return crypto.createHmac('sha256', secret).update(qs).digest('hex');
-}
-
-// Small pause between SAPI calls — Binance's 1200-weight/min budget is
-// plenty for a one-off backfill, but bursting is what trips the IP ban.
-const PAGE_DELAY_MS = 1500;
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-// 429 = rate-limited, 418 = IP banned after repeated 429s. Both are
-// recoverable — Binance returns a Retry-After header (seconds) on the
-// ban and lifts it automatically once the cooldown passes.
-const MAX_RETRIES = 6;
-const RETRIABLE_STATUSES = new Set([418, 429]);
-
-async function signedGet<T>(path: string, params: Record<string, string | number> = {}): Promise<T> {
-  if (!config.binanceEnabled) throw new Error('Binance not configured');
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    // Re-sign each attempt — timestamp is part of the signed payload and
-    // goes stale (>recvWindow ms old) while we back off.
-    const qs = new URLSearchParams({
-      ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])),
-      timestamp: String(Date.now()),
-      recvWindow: '10000',
-    });
-    qs.append('signature', sign(qs.toString(), config.BINANCE_API_SECRET));
-    const res = await fetch(`${BASE}${path}?${qs.toString()}`, {
-      headers: { 'X-MBX-APIKEY': config.BINANCE_API_KEY },
-    });
-    if (res.ok) return (await res.json()) as T;
-
-    const body = await res.text();
-    if (!RETRIABLE_STATUSES.has(res.status) || attempt === MAX_RETRIES) {
-      throw new Error(`Binance ${path} ${res.status}: ${body}`);
-    }
-
-    const retryAfterSec = Number(res.headers.get('retry-after'));
-    const backoffMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
-      ? retryAfterSec * 1000
-      : Math.min(60_000, 1000 * 2 ** attempt) + Math.floor(Math.random() * 500);
-    console.warn(
-      `[binance] ${res.status} on ${path}, sleeping ${Math.round(backoffMs / 1000)}s (attempt ${attempt + 1}/${MAX_RETRIES})`,
-    );
-    await sleep(backoffMs);
-  }
-  throw new Error(`Binance ${path}: exhausted retries`);
-}
+// Pacing, 429/418 handling, and Retry-After are all centralised in
+// binance-http.ts. Every call below routes through it, so the old
+// PAGE_DELAY_MS sleeps between generator pages are now redundant —
+// the pacer enforces a minimum inter-request interval across the
+// entire app.
 
 // ──────────────────────────────────────────────────────────────
 // Spot myTrades (per-symbol) — fromId pagination
@@ -93,7 +48,6 @@ export async function* walkMyTrades(
     if (lastId === fromId) return; // wire-around guard
     fromId = lastId + 1;
     if (page.length < 1000) return;
-    await sleep(PAGE_DELAY_MS);
   }
 }
 
@@ -115,7 +69,6 @@ async function* walkTimeWindows(
     const end = Math.min(t + step - 1, endMs);
     yield { startTime: t, endTime: end };
     t = end + 1;
-    if (t < endMs) await sleep(PAGE_DELAY_MS);
   }
 }
 
@@ -244,7 +197,6 @@ async function* walkFlexibleRewardsByType(
       for (const r of rows) yield r;
       if (rows.length < 100) break;
       page++;
-      await sleep(PAGE_DELAY_MS);
     }
   }
 }
@@ -275,7 +227,6 @@ export async function* walkLockedRewards(
       for (const r of rows) yield r;
       if (rows.length < 100) break;
       page++;
-      await sleep(PAGE_DELAY_MS);
     }
   }
 }
@@ -308,7 +259,6 @@ export async function* walkStakingRewards(
           for (const r of rows) yield r;
           if (rows.length < 100) break;
           page++;
-          await sleep(PAGE_DELAY_MS);
         } catch {
           break; // product not enabled for this account / window
         }
@@ -357,7 +307,6 @@ export async function* walkP2POrders(
         for (const r of rows) if (r.orderStatus === 'COMPLETED') yield r;
         if (rows.length < 100) break;
         page++;
-        await sleep(PAGE_DELAY_MS);
       }
     }
   }
@@ -399,7 +348,6 @@ export async function* walkFiatOrders(
       for (const r of rows) if (r.status === 'Successful') yield { ...r, transactionType };
       if (rows.length < 500) break;
       page++;
-      await sleep(PAGE_DELAY_MS);
     }
   }
 }
@@ -440,7 +388,6 @@ export async function* walkFiatPayments(
       for (const r of rows) if (r.status === 'Completed') yield { ...r, transactionType };
       if (rows.length < 500) break;
       page++;
-      await sleep(PAGE_DELAY_MS);
     }
   }
 }

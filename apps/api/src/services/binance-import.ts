@@ -18,17 +18,15 @@ import {
   walkFlexibleRewards,
   walkLockedRewards,
   walkStakingRewards,
-  walkP2POrders,
   walkFiatOrders,
   walkFiatPayments,
   type RawSpotTrade,
   type RawConvert,
   type RawEarnReward,
   type RawStakingInterest,
-  type RawP2POrder,
   type RawFiatPayment,
 } from './binance-history.js';
-import { fetchAllBinanceBalances } from './binance.js';
+import { fetchAllBinanceBalances, getLiveSpotSymbols } from './binance.js';
 import { backfillUSDTHB, getUSDTHBForTs } from './fx-history.js';
 import { getPriceUSDTForTs } from './price-history.js';
 
@@ -173,10 +171,12 @@ async function importMyTradesForSymbol(symbol: string, counts: Counts): Promise<
       if (t.id > lastId) lastId = t.id;
     }
   } catch (e) {
-    // "Invalid symbol" is expected for candidate pairs the account
-    // never traded. Anything else surfaces.
+    // -1121 ("Invalid symbol") is expected for candidate pairs the
+    // account never traded. Only suppress that specific error code;
+    // everything else (418 bans, network errors, etc.) must surface
+    // so the cursor advances correctly on the next run.
     const msg = (e as Error).message;
-    if (!/Invalid symbol/.test(msg) && !/-1121/.test(msg)) {
+    if (!/-1121/.test(msg)) {
       console.warn(`[binance-import] myTrades ${symbol}:`, msg);
       counts.errors++;
     }
@@ -327,7 +327,6 @@ async function importEarnRewards(startMs: number, endMs: number, counts: Counts)
         });
         if (ok) {
           counts.rewards++;
-          counts.trades++;
         }
         if (ts > lastTs) lastTs = ts;
       }
@@ -355,17 +354,30 @@ async function importDeposits(
     const amount = Number(d.amount);
     if (!(amount > 0)) continue;
     seenAssets.add(d.coin);
-    // Crypto deposits don't tell us the cost basis in THB. We record
-    // them in `deposits` for visibility but leave amount_thb/amount_usd
-    // as zero — the portfolio aggregator's fallback path handles the
-    // unknown-cost case via live price at display time.
+
+    let amountThb = 0;
+    let amountUsd = 0;
+    let fxLocked = 0;
+    let note = `crypto-in ${amount} ${d.coin}`;
+
+    if (STABLES.has(d.coin)) {
+      // Stable arriving from another chain — treat as if it were funded
+      // in THB at the USDTHB rate at the moment of deposit. This is the
+      // user-requested "usdt from wallet X at 13:00 → THB rate at 13:00"
+      // treatment. Non-stable external deposits still leave cost at 0.
+      fxLocked = await getUSDTHBForTs(d.insertTime);
+      amountUsd = amount;
+      amountThb = amount * fxLocked;
+      note = `crypto-in ${amount} ${d.coin} @ ${fxLocked.toFixed(4)} THB/USD`;
+    }
+
     const info = insertDeposit.run({
       platform: 'Binance',
-      amount_thb: 0,
-      amount_usd: 0,
-      fx_locked: 0,
+      amount_thb: amountThb,
+      amount_usd: amountUsd,
+      fx_locked: fxLocked,
       ts: d.insertTime,
-      note: `crypto-in ${amount} ${d.coin}`,
+      note,
       source: `api-deposit:${d.id ?? d.txId ?? `${d.coin}:${d.insertTime}:${amount}`}`,
     });
     if (info.changes > 0) counts.deposits++;
@@ -397,35 +409,10 @@ async function importWithdrawals(
   if (lastTs > (cursor.last_ts ?? 0)) writeCursor(cursorKey, { last_ts: lastTs });
 }
 
-async function importP2P(
-  startMs: number,
-  endMs: number,
-  counts: Counts,
-  seenAssets: Set<string>,
-): Promise<void> {
-  const cursorKey = 'p2p';
-  const cursor = readCursor(cursorKey);
-  const effectiveStart = Math.max(startMs, (cursor.last_ts ?? 0) + 1);
-  if (effectiveStart >= endMs) return;
-  let lastTs = cursor.last_ts ?? 0;
+// P2P import intentionally omitted — user opted out of P2P history ingestion.
+// Re-enable by restoring importP2P/mapP2P and the `walkP2POrders` import.
 
-  for await (const o of walkP2POrders(effectiveStart, endMs)) {
-    seenAssets.add(o.asset);
-    const out = await mapP2P(o);
-    if (out) {
-      if (out.kind === 'deposit') {
-        const info = insertDeposit.run(out.row);
-        if (info.changes > 0) counts.deposits++;
-      } else if (out.kind === 'trade') {
-        if (writeTrade(out.row)) counts.trades++;
-      }
-    }
-    if (o.createTime > lastTs) lastTs = o.createTime;
-  }
-  if (lastTs > (cursor.last_ts ?? 0)) writeCursor(cursorKey, { last_ts: lastTs });
-}
-
-type P2PMapped =
+type FiatPaymentMapped =
   | {
       kind: 'deposit';
       row: {
@@ -439,55 +426,6 @@ type P2PMapped =
       };
     }
   | { kind: 'trade'; row: TradeInsert };
-
-async function mapP2P(o: RawP2POrder): Promise<P2PMapped | null> {
-  const qtyAsset = Number(o.amount); // amount of `asset`
-  const fiatAmount = Number(o.totalPrice); // amount of `fiat` paid/received
-  if (!(qtyAsset > 0) || !(fiatAmount > 0)) return null;
-
-  if (o.fiat === 'THB' && STABLES.has(o.asset)) {
-    // BUY USDT with THB = deposit; SELL USDT for THB = reverse deposit
-    // (record both for completeness; the portfolio math just reads
-    // cumulative `deposits`).
-    return {
-      kind: 'deposit',
-      row: {
-        platform: 'Binance',
-        amount_thb: o.tradeType === 'BUY' ? fiatAmount : -fiatAmount,
-        amount_usd: o.tradeType === 'BUY' ? qtyAsset : -qtyAsset,
-        fx_locked: fiatAmount / qtyAsset,
-        ts: o.createTime,
-        note: `p2p ${o.tradeType.toLowerCase()} ${qtyAsset} ${o.asset} for ${fiatAmount} THB`,
-        source: `api-p2p:${o.orderNumber}`,
-      },
-    };
-  }
-
-  if (o.fiat === 'THB' && !STABLES.has(o.asset)) {
-    // Directly bought / sold a non-stable for THB (rare). Treat as a
-    // trade with price_usd derived from kline and fx_at_trade derived
-    // from the THB/asset rate implied by the P2P fill.
-    const priceUSD = await getPriceUSDTForTs(o.asset, o.createTime);
-    if (priceUSD == null) return null;
-    const fxImplied = fiatAmount / (qtyAsset * priceUSD); // THB per USD implied
-    return {
-      kind: 'trade',
-      row: {
-        symbol: o.asset,
-        side: o.tradeType === 'BUY' ? 'BUY' : 'SELL',
-        qty: qtyAsset,
-        price_usd: priceUSD,
-        fx_at_trade: fxImplied,
-        commission: Number(o.commission) || 0,
-        ts: o.createTime,
-        external_id: `binance:p2p:${o.orderNumber}`,
-        source: 'api-p2p',
-      },
-    };
-  }
-
-  return null; // non-THB fiat not handled
-}
 
 async function importFiatOrdersAndPayments(
   startMs: number,
@@ -551,7 +489,7 @@ async function importFiatOrdersAndPayments(
 
 async function mapFiatPayment(
   p: RawFiatPayment & { transactionType: 0 | 1 },
-): Promise<P2PMapped | null> {
+): Promise<FiatPaymentMapped | null> {
   const fiat = Number(p.sourceAmount);
   const crypto = Number(p.obtainAmount);
   if (!(fiat > 0) || !(crypto > 0) || p.fiatCurrency !== 'THB') return null;
@@ -627,8 +565,6 @@ export async function importBinanceHistory(opts: ImportOptions = {}): Promise<Im
   await importDeposits(startMs, endMs, counts, seenAssets);
   progress('withdrawals');
   await importWithdrawals(startMs, endMs, counts, seenAssets);
-  progress('p2p');
-  await importP2P(startMs, endMs, counts, seenAssets);
   progress('fiat');
   await importFiatOrdersAndPayments(startMs, endMs, counts, seenAssets);
   progress('convert');
@@ -636,14 +572,24 @@ export async function importBinanceHistory(opts: ImportOptions = {}): Promise<Im
 
   progress('myTrades', `discovering asset universe (seen ${seenAssets.size} from history)`);
   const assets = await discoverAssetUniverse(seenAssets);
-  const symbols: string[] = [];
+  const allCandidates: string[] = [];
   for (const a of assets) {
     for (const q of QUOTE_CANDIDATES) {
       if (a === q) continue;
-      symbols.push(`${a}${q}`);
+      allCandidates.push(`${a}${q}`);
     }
   }
-  progress('myTrades', `probing ${symbols.length} candidate pairs`);
+  // Pre-filter against exchangeInfo to avoid probing non-existent pairs.
+  // This cuts the burst from ~400 signed calls down to actual Spot pairs.
+  let liveSpot: Set<string>;
+  try {
+    liveSpot = await getLiveSpotSymbols();
+  } catch (e) {
+    console.warn('[binance-import] exchangeInfo fetch failed, probing all candidates:', (e as Error).message);
+    liveSpot = new Set(allCandidates); // fallback: probe everything
+  }
+  const symbols = allCandidates.filter(s => liveSpot.has(s));
+  progress('myTrades', `probing ${symbols.length} pairs (filtered from ${allCandidates.length} candidates)`);
   let done = 0;
   for (const sym of symbols) {
     await importMyTradesForSymbol(sym, counts);

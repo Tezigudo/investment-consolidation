@@ -1,7 +1,7 @@
-import crypto from 'node:crypto';
-import { config } from '../config.js';
-
-const BASE = 'https://api.binance.com';
+import {
+  binancePublicGet as publicGet,
+  binanceSignedGet as signedGet,
+} from './binance-http.js';
 
 interface BinanceBalance {
   asset: string;
@@ -58,42 +58,6 @@ interface StakingPositionRow {
   positionId: string;
 }
 
-function sign(queryString: string, secret: string) {
-  return crypto.createHmac('sha256', secret).update(queryString).digest('hex');
-}
-
-async function signedGet<T>(path: string, params: Record<string, string | number> = {}): Promise<T> {
-  if (!config.binanceEnabled) {
-    throw new Error('Binance is not configured. Set BINANCE_API_KEY and BINANCE_API_SECRET in .env');
-  }
-  const qs = new URLSearchParams({
-    ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])),
-    timestamp: String(Date.now()),
-    recvWindow: '10000',
-  });
-  const signature = sign(qs.toString(), config.BINANCE_API_SECRET);
-  qs.append('signature', signature);
-
-  const res = await fetch(`${BASE}${path}?${qs.toString()}`, {
-    headers: { 'X-MBX-APIKEY': config.BINANCE_API_KEY },
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Binance ${path} ${res.status}: ${body}`);
-  }
-  return res.json() as Promise<T>;
-}
-
-async function publicGet<T>(path: string, params: Record<string, string | number> = {}): Promise<T> {
-  const qs = new URLSearchParams(
-    Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])),
-  );
-  const url = qs.toString() ? `${BASE}${path}?${qs.toString()}` : `${BASE}${path}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Binance ${path} ${res.status}: ${await res.text()}`);
-  return res.json() as Promise<T>;
-}
-
 export async function fetchSpotAccount() {
   return signedGet<AccountResponse>('/api/v3/account');
 }
@@ -108,7 +72,7 @@ export async function fetchSpotAccount() {
 let spotSymbolCache: { set: Set<string>; ts: number } | null = null;
 const EXCHANGE_INFO_TTL_MS = 6 * 60 * 60 * 1000; // 6h
 
-async function getLiveSpotSymbols(): Promise<Set<string>> {
+export async function getLiveSpotSymbols(): Promise<Set<string>> {
   if (spotSymbolCache && Date.now() - spotSymbolCache.ts < EXCHANGE_INFO_TTL_MS) {
     return spotSymbolCache.set;
   }
@@ -300,8 +264,13 @@ export async function fetchKlinePriceAt(
     // kline tuple: [openTime, open, high, low, close, volume, ...]
     const close = Number(rows[0][4]);
     return Number.isFinite(close) && close > 0 ? close : null;
-  } catch {
-    return null;
+  } catch (e) {
+    // Only swallow "pair not listed" style errors. Rate-limit / ban
+    // exceptions must propagate so the importer can stop cleanly
+    // instead of silently marking every reward with no price.
+    const msg = (e as Error).message;
+    if (/Invalid symbol|-1121/.test(msg)) return null;
+    throw e;
   }
 }
 

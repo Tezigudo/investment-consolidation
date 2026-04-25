@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeAvgFromTrades } from './cost-basis.js';
+import { computeAvgFromTrades, aggregateTrades } from './cost-basis.js';
 import type { TradeRow } from '@consolidate/shared';
 
 function trade(partial: Partial<TradeRow>): TradeRow {
@@ -70,5 +70,63 @@ describe('computeAvgFromTrades', () => {
     expect(r.qty).toBe(10);
     expect(r.avgUSD).toBe(50);
     expect(r.costTHB).toBeCloseTo(10 * 50 * 36, 6); // 18000
+  });
+});
+
+describe('aggregateTrades — realized PNL', () => {
+  it('partial SELL banks proceeds − cost of sold portion', () => {
+    // BUY 10 @ 100 (FX 35) → costUSD=1000, costTHB=35000.
+    // SELL 4 @ 120 (FX 36): sold 40% → costShareUSD=400, costShareTHB=14000,
+    // proceedsUSD=480, proceedsTHB=17280.
+    const r = aggregateTrades([
+      trade({ side: 'BUY', qty: 10, price_usd: 100, fx_at_trade: 35 }),
+      trade({ side: 'SELL', qty: 4, price_usd: 120, fx_at_trade: 36 }),
+    ]);
+    expect(r.qty).toBe(6);
+    expect(r.avgUSD).toBe(100); // weighted avg unchanged
+    expect(r.costTHB).toBeCloseTo(35000 * 0.6, 6);
+    expect(r.realizedUSD).toBeCloseTo(480 - 400, 6);          // +80
+    expect(r.realizedTHB).toBeCloseTo(17280 - 14000, 6);      // +3280
+    // FX-only contribution: 400 × (36 − 35) = 400
+    expect(r.realizedFxContribTHB).toBeCloseTo(400, 6);
+  });
+
+  it('full SELL clears qty and books full realized', () => {
+    const r = aggregateTrades([
+      trade({ side: 'BUY', qty: 10, price_usd: 100, fx_at_trade: 35 }),
+      trade({ side: 'SELL', qty: 10, price_usd: 120, fx_at_trade: 36 }),
+    ]);
+    expect(r.qty).toBe(0);
+    expect(r.costTHB).toBeCloseTo(0, 6);
+    expect(r.realizedUSD).toBeCloseTo(1200 - 1000, 6);        // +200
+    expect(r.realizedTHB).toBeCloseTo(1200 * 36 - 35000, 6);  // 43200 − 35000 = 8200
+    expect(r.realizedFxContribTHB).toBeCloseTo(1000 * (36 - 35), 6); // 1000
+  });
+
+  it('SELL at a loss yields negative realized', () => {
+    const r = aggregateTrades([
+      trade({ side: 'BUY', qty: 10, price_usd: 100, fx_at_trade: 35 }),
+      trade({ side: 'SELL', qty: 5, price_usd: 80, fx_at_trade: 35 }),
+    ]);
+    expect(r.realizedUSD).toBeCloseTo(400 - 500, 6);           // −100
+    expect(r.realizedTHB).toBeCloseTo(400 * 35 - 17500, 6);    // 14000 − 17500 = −3500
+    expect(r.realizedFxContribTHB).toBeCloseTo(0, 6);          // FX unchanged
+  });
+
+  it('multi-buy then partial sell uses weighted avg cost', () => {
+    // BUY 10 @ 100 FX35 + BUY 10 @ 200 FX36 → qty=20, costUSD=3000, costTHB=107000
+    // SELL 5 @ 180 FX37: sellFrac=0.25 → costShareUSD=750, costShareTHB=26750,
+    // proceedsUSD=900, proceedsTHB=33300.
+    const r = aggregateTrades([
+      trade({ side: 'BUY', qty: 10, price_usd: 100, fx_at_trade: 35 }),
+      trade({ side: 'BUY', qty: 10, price_usd: 200, fx_at_trade: 36 }),
+      trade({ side: 'SELL', qty: 5, price_usd: 180, fx_at_trade: 37 }),
+    ]);
+    expect(r.qty).toBe(15);
+    expect(r.avgUSD).toBeCloseTo(150, 6); // avg preserved
+    expect(r.realizedUSD).toBeCloseTo(900 - 750, 6);          // +150
+    expect(r.realizedTHB).toBeCloseTo(33300 - 26750, 6);      // +6550
+    // fxLockedAvg = 26750 / 750 = 35.6667; FX contrib = 750 × (37 − 35.6667) = 1000
+    expect(r.realizedFxContribTHB).toBeCloseTo(750 * (37 - 26750 / 750), 6);
   });
 });

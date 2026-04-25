@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "import:dime": "tsx src/cli/import-dime.ts",
+    "import:dime-mail": "tsx src/cli/import-dime-mail.ts",
     "import:binance": "tsx src/cli/import-binance.ts"
   },
   "dependencies": {
@@ -20,8 +21,10 @@
     "better-sqlite3": "^11.3.0",
     "dotenv": "^16.4.5",
     "fastify": "^4.28.1",
+    "googleapis": "^171.4.0",
     "node-cron": "^3.0.3",
     "papaparse": "^5.4.1",
+    "pdfjs-dist": "^5.6.205",
     "zod": "^3.23.8"
   },
   "devDependencies": {

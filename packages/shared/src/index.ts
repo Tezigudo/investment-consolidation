@@ -40,9 +40,12 @@ export interface Totals {
   marketTHB: number;
   costUSD: number;
   costTHB: number;
-  pnlUSD: number;
-  pnlTHB: number;
-  fxContribTHB: number;
+  pnlUSD: number;             // unrealized USD (currently held)
+  pnlTHB: number;              // unrealized THB (currently held)
+  fxContribTHB: number;        // unrealized FX contribution
+  realizedUSD: number;         // realized USD across all SELLs (lifetime)
+  realizedTHB: number;         // realized THB across all SELLs (lifetime)
+  realizedFxContribTHB: number; // FX-only portion of realized THB
 }
 
 export interface PortfolioSnapshot {

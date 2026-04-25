@@ -4,7 +4,7 @@ import { db } from '../db/client.js';
 import { refreshPrices } from '../services/prices.js';
 import { getUSDTHB } from '../services/fx.js';
 import { refreshBinance } from '../services/portfolio.js';
-import { importBinanceHistory } from '../services/binance-import.js';
+import { importBinanceHistory, isBinanceSyncSeeded } from '../services/binance-import.js';
 import { refreshDailyUSDTHB } from '../services/fx-history.js';
 
 let started = false;
@@ -37,6 +37,21 @@ export function startJobs() {
 
   // Fire-and-forget warm-up so the first dashboard load isn't empty.
   void warmOnce();
+
+  // Incremental Binance history sync on server start (if already seeded).
+  if (config.binanceEnabled && isBinanceSyncSeeded()) {
+    void (async () => {
+      try {
+        console.log('[jobs] binance history: incremental sync on startup…');
+        const r = await importBinanceHistory();
+        console.log(
+          `[jobs] binance history startup sync done: +${r.counts.trades} trades, +${r.counts.deposits} deposits, +${r.counts.rewards} rewards (${(r.durationMs / 1000).toFixed(1)}s)`,
+        );
+      } catch (e) {
+        console.warn('[jobs] binance history startup sync failed:', (e as Error).message);
+      }
+    })();
+  }
 
   // Prices every 5 min (stocks) + crypto
   cron.schedule('*/5 * * * *', async () => {
@@ -90,8 +105,7 @@ export function startJobs() {
   // `bun run import:binance` once manually; afterwards this runs incrementally.
   cron.schedule('15 * * * *', async () => {
     if (!config.binanceEnabled) return;
-    const seeded = db.prepare('SELECT 1 FROM binance_sync_state LIMIT 1').get();
-    if (!seeded) {
+    if (!isBinanceSyncSeeded()) {
       console.log(
         '[jobs] binance history: no cursors yet — run `bun run import:binance` once before cron takes over',
       );

@@ -33,6 +33,23 @@ import { getPriceUSDTForTs } from './price-history.js';
 const BINANCE_LAUNCH_MS = Date.parse('2017-07-01T00:00:00Z'); // safe lower bound
 
 // ──────────────────────────────────────────────────────────────
+// Public sync-state helpers
+// ──────────────────────────────────────────────────────────────
+
+/** True if at least one cursor row exists (initial backfill was run). */
+export function isBinanceSyncSeeded(): boolean {
+  return !!db.prepare('SELECT 1 FROM binance_sync_state LIMIT 1').get();
+}
+
+/** Latest updated_at across all cursors, or null if never synced. */
+export function getLastBinanceSyncTs(): number | null {
+  const row = db
+    .prepare('SELECT MAX(updated_at) AS ts FROM binance_sync_state')
+    .get() as { ts: number | null } | undefined;
+  return row?.ts ?? null;
+}
+
+// ──────────────────────────────────────────────────────────────
 // Cursor helpers
 // ──────────────────────────────────────────────────────────────
 
@@ -161,11 +178,9 @@ async function importMyTradesForSymbol(symbol: string, counts: Counts): Promise<
   const cursor = readCursor(cursorKey);
   let startFromId = cursor.last_id ? cursor.last_id + 1 : 0;
   let lastId = cursor.last_id ?? 0;
-  let sawAny = false;
 
   try {
     for await (const t of walkMyTrades(symbol, startFromId)) {
-      sawAny = true;
       const mapped = await mapSpotTrade(t, parsed.base, parsed.quote);
       if (mapped && writeTrade(mapped)) counts.trades++;
       if (t.id > lastId) lastId = t.id;
@@ -183,7 +198,10 @@ async function importMyTradesForSymbol(symbol: string, counts: Counts): Promise<
     return;
   }
 
-  if (sawAny) writeCursor(cursorKey, { last_id: lastId });
+  // Persist cursor even when no trades were found (last_id stays 0).
+  // This marks the symbol as "probed" so subsequent incremental runs
+  // can skip it instead of burning another signed request.
+  writeCursor(cursorKey, { last_id: lastId });
 }
 
 async function mapSpotTrade(
@@ -563,12 +581,20 @@ export async function importBinanceHistory(opts: ImportOptions = {}): Promise<Im
 
   progress('deposits', 'crypto-in');
   await importDeposits(startMs, endMs, counts, seenAssets);
+  progress('deposits', `done — +${counts.deposits} deposits`);
+
   progress('withdrawals');
   await importWithdrawals(startMs, endMs, counts, seenAssets);
+  progress('withdrawals', `done — +${counts.withdrawals} withdrawals`);
+
   progress('fiat');
   await importFiatOrdersAndPayments(startMs, endMs, counts, seenAssets);
+  progress('fiat', `done — deposits=${counts.deposits}, trades=${counts.trades}`);
+
   progress('convert');
+  const tradesBefore = counts.trades;
   await importConverts(startMs, endMs, counts, seenAssets);
+  progress('convert', `done — +${counts.trades - tradesBefore} convert trades`);
 
   progress('myTrades', `discovering asset universe (seen ${seenAssets.size} from history)`);
   const assets = await discoverAssetUniverse(seenAssets);
@@ -589,16 +615,33 @@ export async function importBinanceHistory(opts: ImportOptions = {}): Promise<Im
     liveSpot = new Set(allCandidates); // fallback: probe everything
   }
   const symbols = allCandidates.filter(s => liveSpot.has(s));
-  progress('myTrades', `probing ${symbols.length} pairs (filtered from ${allCandidates.length} candidates)`);
+  // Skip symbols that have been probed before and had no trades
+  // (cursor exists with last_id = 0). Only re-probe symbols that
+  // either have never been checked or have a real trade cursor.
+  const toProbe = symbols.filter(sym => {
+    const cursor = readCursor(`myTrades:${sym}`);
+    // null = never probed → must check.
+    // last_id > 0 = has trades → check for new ones.
+    // last_id = 0 + exists in DB = probed but empty → skip.
+    return cursor.last_id === null || cursor.last_id > 0;
+  });
+  progress('myTrades', `probing ${toProbe.length} pairs (${symbols.length - toProbe.length} cached-empty skipped, ${allCandidates.length} total candidates)`);
   let done = 0;
-  for (const sym of symbols) {
+  const spotTradesBefore = counts.trades;
+  for (const sym of toProbe) {
     await importMyTradesForSymbol(sym, counts);
     done++;
-    if (done % 10 === 0) progress('myTrades', `${done}/${symbols.length}`);
+    if (done % 10 === 0) {
+      progress('myTrades', `${done}/${toProbe.length} — +${counts.trades - spotTradesBefore} trades so far`);
+    }
   }
+  progress('myTrades', `done — +${counts.trades - spotTradesBefore} spot trades from ${toProbe.length} pairs`);
 
   progress('rewards', 'earn + staking');
   await importEarnRewards(startMs, endMs, counts);
+  progress('rewards', `done — +${counts.rewards} rewards`);
+
+  progress('summary', `trades=${counts.trades} deposits=${counts.deposits} rewards=${counts.rewards} withdrawals=${counts.withdrawals} errors=${counts.errors}`);
 
   return {
     counts,

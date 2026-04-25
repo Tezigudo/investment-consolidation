@@ -144,6 +144,21 @@ const MIGRATIONS: Migration[] = [
         ON deposits(platform, source);
     `,
   },
+  {
+    version: 4,
+    name: 'dime_mail_sync',
+    up: `
+      -- Incremental cursor for the Gmail-based DIME importer. Mirrors
+      -- binance_sync_state. Endpoints: 'kkp-inbound' (X1270 THB funding
+      -- notifications) and 'dime-confirmation' (offshore securities
+      -- confirmation notes — PDF text dumped for phase-2 parser).
+      CREATE TABLE IF NOT EXISTS dime_sync_state (
+        endpoint    TEXT PRIMARY KEY,
+        last_ts     INTEGER,
+        updated_at  INTEGER NOT NULL
+      );
+    `,
+  },
 ];
 
 export function runMigrations(db: Database) {

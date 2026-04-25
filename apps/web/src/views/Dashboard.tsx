@@ -164,9 +164,24 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
               </div>
               <div style={{ height: 1, background: 'var(--border)' }} />
               <div>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 2 }}>
+                  Realized · banked from sells
+                </div>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 20, fontWeight: 500, color: t.realizedTHB >= 0 ? 'var(--up)' : 'var(--down)' }}>
+                  {fmtTHB(t.realizedTHB, { sign: true })}
+                </div>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--muted)' }}>
+                  {fmtUSD(t.realizedUSD, { sign: true })} · {fmtTHB(t.realizedFxContribTHB, { sign: true })} from FX
+                </div>
+              </div>
+              <div style={{ height: 1, background: 'var(--border)' }} />
+              <div>
                 <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 2 }}>Total THB PNL</div>
-                <div style={{ fontFamily: 'var(--mono)', fontSize: 24, fontWeight: 500, color: t.pnlTHB >= 0 ? 'var(--up)' : 'var(--down)' }}>
-                  {fmtTHB(t.pnlTHB, { sign: true })}
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 24, fontWeight: 500, color: t.pnlTHB + t.realizedTHB >= 0 ? 'var(--up)' : 'var(--down)' }}>
+                  {fmtTHB(t.pnlTHB + t.realizedTHB, { sign: true })}
+                </div>
+                <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--muted)' }}>
+                  unrealized {fmtTHB(t.pnlTHB, { sign: true })} + realized {fmtTHB(t.realizedTHB, { sign: true })}
                 </div>
               </div>
             </div>

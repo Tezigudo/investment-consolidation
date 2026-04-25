@@ -77,8 +77,12 @@ export async function getLiveSpotSymbols(): Promise<Set<string>> {
     return spotSymbolCache.set;
   }
   const res = await publicGet<{ symbols: ExchangeInfoSymbol[] }>('/api/v3/exchangeInfo');
+  // Include every symbol that has ever been Spot-tradable, not just
+  // currently TRADING ones. Delisted (BREAK) pairs still have
+  // historical myTrades data we need; excluding them would cause
+  // unfiltered candidate probing for those assets.
   const set = new Set(
-    res.symbols.filter((s) => s.status === 'TRADING' && s.isSpotTradingAllowed).map((s) => s.symbol),
+    res.symbols.filter((s) => s.isSpotTradingAllowed).map((s) => s.symbol),
   );
   spotSymbolCache = { set, ts: Date.now() };
   return set;

@@ -2,6 +2,7 @@ import {
   binancePublicGet as publicGet,
   binanceSignedGet as signedGet,
 } from './binance-http.js';
+import { isStable } from './binance-stables.js';
 
 interface BinanceBalance {
   asset: string;
@@ -211,8 +212,6 @@ export async function fetchAllBinanceBalances(): Promise<WalletBreakdown[]> {
 // Pricing
 // ──────────────────────────────────────────────────────────────
 
-const STABLES = new Set(['USDT', 'USDC', 'BUSD', 'FDUSD', 'TUSD', 'DAI', 'USDP']);
-
 // Fetch current USD(T) quote for a list of crypto symbols. Binance
 // quotes are in USDT which is ≈1 USD — good enough for a personal
 // dashboard. Unlisted-on-Spot assets are filtered out via exchangeInfo
@@ -222,7 +221,7 @@ export async function fetchPricesUSDT(assets: string[]): Promise<Record<string, 
   const stables: Record<string, number> = {};
   const nonStable: string[] = [];
   for (const a of assets) {
-    if (STABLES.has(a)) stables[a] = 1;
+    if (isStable(a)) stables[a] = 1;
     else nonStable.push(a);
   }
   if (nonStable.length === 0) return stables;
@@ -252,7 +251,7 @@ export async function fetchKlinePriceAt(
   ts: number,
   quote: 'USDT' | 'BUSD' = 'USDT',
 ): Promise<number | null> {
-  if (STABLES.has(asset)) return 1;
+  if (isStable(asset)) return 1;
   const symbol = `${asset}${quote}`;
   const dayStart = Math.floor(ts / 86_400_000) * 86_400_000;
   const dayEnd = dayStart + 86_400_000 - 1;

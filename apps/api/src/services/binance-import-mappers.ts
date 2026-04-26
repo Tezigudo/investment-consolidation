@@ -1,0 +1,187 @@
+// Pure mappers from raw Binance API rows → our trades/deposits schema.
+//
+// These functions are intentionally side-effect-free w.r.t. the DB:
+// they may call out for FX/price lookups (which themselves cache) but
+// they do not write rows. Returning null/[] means "skip this row".
+
+import type {
+  RawSpotTrade,
+  RawConvert,
+  RawFiatPayment,
+} from './binance-history.js';
+import { getUSDTHBForTs } from './fx-history.js';
+import { getPriceUSDTForTs } from './price-history.js';
+import { isStable, QUOTE_CANDIDATES } from './binance-stables.js';
+
+export interface TradeInsert {
+  symbol: string;
+  side: 'BUY' | 'SELL' | 'DIV';
+  qty: number;
+  price_usd: number;
+  fx_at_trade: number;
+  commission: number;
+  ts: number;
+  external_id: string;
+  source: string;
+}
+
+export interface DepositInsert {
+  platform: 'Binance';
+  amount_thb: number;
+  amount_usd: number;
+  fx_locked: number;
+  ts: number;
+  note: string;
+  source: string;
+}
+
+export type FiatPaymentMapped =
+  | { kind: 'deposit'; row: DepositInsert }
+  | { kind: 'trade'; row: TradeInsert };
+
+export function parseSymbolBaseQuote(symbol: string): { base: string; quote: string } | null {
+  for (const q of QUOTE_CANDIDATES) {
+    if (symbol.endsWith(q) && symbol.length > q.length) {
+      return { base: symbol.slice(0, -q.length), quote: q };
+    }
+  }
+  return null;
+}
+
+export async function resolvePriceUSD(
+  priceInQuote: number,
+  quote: string,
+  ts: number,
+): Promise<number | null> {
+  if (isStable(quote)) return priceInQuote;
+  const quoteUSD = await getPriceUSDTForTs(quote, ts);
+  if (quoteUSD == null) return null;
+  return priceInQuote * quoteUSD;
+}
+
+export async function mapSpotTrade(
+  t: RawSpotTrade,
+  base: string,
+  quote: string,
+): Promise<TradeInsert | null> {
+  const qty = Number(t.qty);
+  const priceInQuote = Number(t.price);
+  if (!(qty > 0) || !(priceInQuote > 0)) return null;
+  const priceUSD = await resolvePriceUSD(priceInQuote, quote, t.time);
+  if (priceUSD == null) return null;
+  const fx = await getUSDTHBForTs(t.time);
+  return {
+    symbol: base,
+    side: t.isBuyer ? 'BUY' : 'SELL',
+    qty,
+    price_usd: priceUSD,
+    fx_at_trade: fx,
+    commission: Number(t.commission) || 0,
+    ts: t.time,
+    external_id: `binance:trade:${t.id}`,
+    source: 'api',
+  };
+}
+
+// A convert {from A to B} is a SELL of A and a BUY of B. We record it
+// from the perspective of whichever side is the "asset" (non-stable).
+// If both are non-stable (e.g. BTC→ETH), both legs are recorded. If
+// both are stables, we skip (USDT→BUSD is a non-event).
+export async function mapConvert(c: RawConvert): Promise<TradeInsert[]> {
+  const fromAmt = Number(c.fromAmount);
+  const toAmt = Number(c.toAmount);
+  if (!(fromAmt > 0) || !(toAmt > 0)) return [];
+
+  const ts = c.createTime;
+  const fx = await getUSDTHBForTs(ts);
+  const out: TradeInsert[] = [];
+
+  const fromIsStable = isStable(c.fromAsset);
+  const toIsStable = isStable(c.toAsset);
+
+  if (fromIsStable && toIsStable) return [];
+
+  if (!toIsStable) {
+    // Effectively bought `toAsset` with `fromAsset`.
+    const fromUSD = fromIsStable ? fromAmt : (await getPriceUSDTForTs(c.fromAsset, ts)) ?? 0;
+    const priceUSD = fromAmt > 0 && fromUSD > 0 ? (fromUSD * 1) / toAmt : 0;
+    if (priceUSD > 0) {
+      out.push({
+        symbol: c.toAsset,
+        side: 'BUY',
+        qty: toAmt,
+        price_usd: priceUSD,
+        fx_at_trade: fx,
+        commission: 0,
+        ts,
+        external_id: `binance:convert:buy:${c.orderId}`,
+        source: 'api',
+      });
+    }
+  }
+
+  if (!fromIsStable) {
+    // Effectively sold `fromAsset` for `toAsset`.
+    const toUSD = toIsStable ? toAmt : (await getPriceUSDTForTs(c.toAsset, ts)) ?? 0;
+    const priceUSD = toUSD > 0 && fromAmt > 0 ? toUSD / fromAmt : 0;
+    if (priceUSD > 0) {
+      out.push({
+        symbol: c.fromAsset,
+        side: 'SELL',
+        qty: fromAmt,
+        price_usd: priceUSD,
+        fx_at_trade: fx,
+        commission: 0,
+        ts,
+        external_id: `binance:convert:sell:${c.orderId}`,
+        source: 'api',
+      });
+    }
+  }
+
+  return out;
+}
+
+// "Buy crypto with card/bank" — a real THB→crypto trade with a known
+// THB cost. Stable output → deposit row (USD wallet credit). Non-stable
+// output → trade row with implied fx_at_trade = fiat / (qty × priceUSD).
+export async function mapFiatPayment(
+  p: RawFiatPayment & { transactionType: 0 | 1 },
+): Promise<FiatPaymentMapped | null> {
+  const fiat = Number(p.sourceAmount);
+  const crypto = Number(p.obtainAmount);
+  if (!(fiat > 0) || !(crypto > 0) || p.fiatCurrency !== 'THB') return null;
+
+  if (isStable(p.cryptoCurrency)) {
+    return {
+      kind: 'deposit',
+      row: {
+        platform: 'Binance',
+        amount_thb: p.transactionType === 0 ? fiat : -fiat,
+        amount_usd: p.transactionType === 0 ? crypto : -crypto,
+        fx_locked: fiat / crypto,
+        ts: p.createTime,
+        note: `fiat-pay ${p.cryptoCurrency} qty=${crypto} for ${fiat} THB`,
+        source: `api-fiat-pay:${p.orderNo}`,
+      },
+    };
+  }
+
+  const priceUSD = await getPriceUSDTForTs(p.cryptoCurrency, p.createTime);
+  if (priceUSD == null) return null;
+  const fxImplied = fiat / (crypto * priceUSD);
+  return {
+    kind: 'trade',
+    row: {
+      symbol: p.cryptoCurrency,
+      side: p.transactionType === 0 ? 'BUY' : 'SELL',
+      qty: crypto,
+      price_usd: priceUSD,
+      fx_at_trade: fxImplied,
+      commission: Number(p.totalFee) || 0,
+      ts: p.createTime,
+      external_id: `binance:fiat-pay:${p.orderNo}`,
+      source: 'api-fiat-pay',
+    },
+  };
+}

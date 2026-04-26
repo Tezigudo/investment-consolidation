@@ -1,6 +1,7 @@
 import { db } from '../db/client.js';
 import { fetchKlinePriceAt } from './binance.js';
 import { dateKey } from './fx-history.js';
+import { isStable } from './binance-stables.js';
 
 // Historical crypto-in-USDT price lookup, cached per (asset, date) in
 // prices_daily. Used by the Binance history importer to mark-to-market
@@ -8,7 +9,7 @@ import { dateKey } from './fx-history.js';
 // every reward row.
 
 export async function getPriceUSDTForTs(asset: string, ts: number): Promise<number | null> {
-  if (asset === 'USDT' || asset === 'USDC' || asset === 'BUSD' || asset === 'FDUSD') return 1;
+  if (isStable(asset)) return 1;
   const date = dateKey(ts);
 
   const cached = db

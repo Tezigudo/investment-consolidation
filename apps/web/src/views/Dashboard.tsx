@@ -83,10 +83,11 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
   if (filter !== 'DIME') snap.positions.binance.forEach((p) => filtered.push({ ...p, key: `Binance:${p.symbol}` }));
   filtered.sort((a, b) => b.marketUSD - a.marketUSD);
 
+  const pnlOf = (p: EnrichedPosition) => (currency === 'THB' ? p.pnlTHB : p.pnlUSD);
   const topMovers = [...allPositions]
-    .sort((a, b) => Math.abs(currency === 'THB' ? b.pnlTHB - a.pnlTHB : b.pnlUSD - a.pnlUSD))
+    .sort((a, b) => Math.abs(pnlOf(b)) - Math.abs(pnlOf(a)))
     .slice(0, 6)
-    .map((p) => ({ sym: p.symbol, pnl: currency === 'THB' ? p.pnlTHB : p.pnlUSD }));
+    .map((p) => ({ sym: p.symbol, pnl: pnlOf(p) }));
 
   return (
     <>

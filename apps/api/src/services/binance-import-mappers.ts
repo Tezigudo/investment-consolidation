@@ -92,51 +92,64 @@ export async function mapConvert(c: RawConvert): Promise<TradeInsert[]> {
   const toAmt = Number(c.toAmount);
   if (!(fromAmt > 0) || !(toAmt > 0)) return [];
 
+  const fromIsStable = isStable(c.fromAsset);
+  const toIsStable = isStable(c.toAsset);
+  // Skip stable↔stable BEFORE any I/O — no FX or price lookup needed.
+  if (fromIsStable && toIsStable) return [];
+
   const ts = c.createTime;
   const fx = await getUSDTHBForTs(ts);
   const out: TradeInsert[] = [];
 
-  const fromIsStable = isStable(c.fromAsset);
-  const toIsStable = isStable(c.toAsset);
-
-  if (fromIsStable && toIsStable) return [];
-
-  if (!toIsStable) {
-    // Effectively bought `toAsset` with `fromAsset`.
-    const fromUSD = fromIsStable ? fromAmt : (await getPriceUSDTForTs(c.fromAsset, ts)) ?? 0;
-    const priceUSD = fromAmt > 0 && fromUSD > 0 ? (fromUSD * 1) / toAmt : 0;
-    if (priceUSD > 0) {
-      out.push({
-        symbol: c.toAsset,
-        side: 'BUY',
-        qty: toAmt,
-        price_usd: priceUSD,
-        fx_at_trade: fx,
-        commission: 0,
-        ts,
-        external_id: `binance:convert:buy:${c.orderId}`,
-        source: 'api',
-      });
-    }
+  // Total USD value of each side at convert time. For stables this is
+  // just the amount; for non-stables it's amount × price-per-unit. The
+  // earlier version dropped the amount factor for non-stables, which
+  // mis-priced non-stable→non-stable converts (caught by mapper tests).
+  let fromUsdTotal = 0;
+  if (fromIsStable) {
+    fromUsdTotal = fromAmt;
+  } else {
+    const p = await getPriceUSDTForTs(c.fromAsset, ts);
+    if (p != null && p > 0) fromUsdTotal = fromAmt * p;
+  }
+  let toUsdTotal = 0;
+  if (toIsStable) {
+    toUsdTotal = toAmt;
+  } else {
+    const p = await getPriceUSDTForTs(c.toAsset, ts);
+    if (p != null && p > 0) toUsdTotal = toAmt * p;
   }
 
-  if (!fromIsStable) {
+  if (!toIsStable && fromUsdTotal > 0) {
+    // Effectively bought `toAsset` with `fromAsset`.
+    const priceUSD = fromUsdTotal / toAmt;
+    out.push({
+      symbol: c.toAsset,
+      side: 'BUY',
+      qty: toAmt,
+      price_usd: priceUSD,
+      fx_at_trade: fx,
+      commission: 0,
+      ts,
+      external_id: `binance:convert:buy:${c.orderId}`,
+      source: 'api',
+    });
+  }
+
+  if (!fromIsStable && toUsdTotal > 0) {
     // Effectively sold `fromAsset` for `toAsset`.
-    const toUSD = toIsStable ? toAmt : (await getPriceUSDTForTs(c.toAsset, ts)) ?? 0;
-    const priceUSD = toUSD > 0 && fromAmt > 0 ? toUSD / fromAmt : 0;
-    if (priceUSD > 0) {
-      out.push({
-        symbol: c.fromAsset,
-        side: 'SELL',
-        qty: fromAmt,
-        price_usd: priceUSD,
-        fx_at_trade: fx,
-        commission: 0,
-        ts,
-        external_id: `binance:convert:sell:${c.orderId}`,
-        source: 'api',
-      });
-    }
+    const priceUSD = toUsdTotal / fromAmt;
+    out.push({
+      symbol: c.fromAsset,
+      side: 'SELL',
+      qty: fromAmt,
+      price_usd: priceUSD,
+      fx_at_trade: fx,
+      commission: 0,
+      ts,
+      external_id: `binance:convert:sell:${c.orderId}`,
+      source: 'api',
+    });
   }
 
   return out;

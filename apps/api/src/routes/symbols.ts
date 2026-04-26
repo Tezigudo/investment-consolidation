@@ -98,16 +98,23 @@ async function buildSeries(
   // 1. Read cache.
   const cache = readDailyCache(symbol, fromDay, today);
 
-  // 2. If cache misses any day older than today, refetch the whole window.
-  // (Backfill is cheap — 1 API call — and avoids dealing with weekend gaps for stocks.)
-  let needFetch = false;
-  for (let d = fromDay; d < today; d += ONE_DAY) {
-    // Stocks have legit weekend/holiday gaps. We treat any single gap as fillable
-    // by carrying forward, so only refetch when the cache has NO recent rows at all.
+  // 2. Decide whether to refetch.
+  //   a) cold cache (<30% of window populated) → backfill the whole window.
+  //   b) warm cache but the freshest entry is more than STALE_DAYS old →
+  //      refetch (otherwise the chart goes flat between latest cached day
+  //      and today, with only today's point patched by the live overlay).
+  // Stocks legitimately have weekend/holiday gaps, so we allow up to 3
+  // missing days at the tail before refetching.
+  const STALE_DAYS = 3;
+  let latestCachedDay = 0;
+  for (const k of cache.keys()) {
+    const d = Date.parse(k);
+    if (Number.isFinite(d) && d > latestCachedDay) latestCachedDay = d;
   }
   const cacheCount = cache.size;
-  // Heuristic: refetch if we have <30% of expected days for the window.
-  if (cacheCount < days * 0.3) needFetch = true;
+  const isCold = cacheCount < days * 0.3;
+  const isStale = latestCachedDay > 0 && today - latestCachedDay > STALE_DAYS * ONE_DAY;
+  const needFetch = isCold || isStale;
 
   if (needFetch) {
     const fresh =

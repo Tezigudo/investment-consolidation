@@ -175,6 +175,14 @@ async function importEarnRewards(startMs: number, endMs: number, counts: Counts)
         if (!(amount > 0)) continue;
         const priceUSD = await getPriceUSDTForTs(r.asset, ts);
         if (priceUSD == null) {
+          // Klines miss → asset never had a USDT/BUSD pair on this date
+          // (e.g. delisted before the backfill window opened, or asset
+          // only ever quoted against another now-delisted pair). The row
+          // is dropped silently from the trades table; surface it so the
+          // user can decide whether to bridge-price it manually.
+          console.warn(
+            `[binance-import] ${key}: dropped ${r.asset} reward at ${new Date(ts).toISOString()} — no historical USDT price`,
+          );
           counts.errors++;
           continue;
         }

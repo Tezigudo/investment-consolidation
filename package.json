@@ -18,7 +18,9 @@
     "typecheck": "bun run --filter './apps/*' typecheck",
     "typecheck:api": "bun run --filter @consolidate/api typecheck",
     "typecheck:web": "bun run --filter @consolidate/web typecheck",
-    "import:dime": "bun run --filter @consolidate/api import:dime --"
+    "import:dime": "bun run --filter @consolidate/api import:dime --",
+    "import:dime-mail": "bun run --filter @consolidate/api import:dime-mail --",
+    "import:binance": "bun run --filter @consolidate/api import:binance --"
   },
   "engines": {
     "bun": ">=1.1",

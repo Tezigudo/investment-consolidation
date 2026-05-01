@@ -30,7 +30,7 @@ bun run typecheck       # both workspaces in parallel
 bun run build           # typecheck + vite build
 bun run --filter @consolidate/api test            # vitest
 bun run --filter @consolidate/api test -- cost-basis  # single test file
-bun run import:dime -- apps/api/fixtures/dime-sample.csv
+bun run import:dime -- path/to/dime-export.csv
 ```
 
 Bun is the package manager and workspace task runner. The **API itself still runs under Node** (`tsx watch` for dev, `node dist/server.js` for start) because `better-sqlite3`'s prebuilt N-API binary segfaults under Bun's runtime as of 1.2.x. Don't "simplify" the api's `dev`/`start` to `bun --watch` / `bun dist/...` without first swapping to `bun:sqlite` (which would mean a rewrite of `db/client.ts` and `db/migrations.ts`). The web side runs fine under Bun.
@@ -188,23 +188,3 @@ When memory_search returns a fact marked ⚠ STALE:
 2. If changed → update via memory_write
 3. NEVER act on STALE facts without verification
 
-## Process Management (Windows)
-- NEVER use `taskkill //F //IM node.exe` — kills ALL Node.js INCLUDING Claude Code CLI!
-- Use: `npx kill-port PORT` or find PID via `netstat -ano | findstr :PORT` then `taskkill //F //PID XXXX`
-
-## Git Rules
-- Commit often, small atomic changes. Format: "[type] what and why"
-- commit = Tier 1 (do it yourself). push = Tier 3 (verify_identity).
-
-## Project DNA: investing-consolidate
-Stack: unknown
-Style: [unknown]
-Structure: apps, design, packages, secrets
-Deploy: [NOT SET]
-Active: [new session]
-Last: [first session]
-
-## Session Continuity
-State: No changes or facts in this session.
-
-# === END COGNILAYER ===

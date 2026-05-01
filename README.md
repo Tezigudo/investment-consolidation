@@ -92,8 +92,7 @@ DIME → Portfolio → Trade history → Export CSV.
 Either drop the file on the dashboard (right-side panel) or run:
 
 ```bash
-cd apps/api
-bun run import:dime -- fixtures/dime-sample.csv
+bun run import:dime -- path/to/your-export.csv
 ```
 
 The importer is lenient about headers — it accepts `Symbol`, `Ticker`,

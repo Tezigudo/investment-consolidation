@@ -1,5 +1,40 @@
 import type { PortfolioSnapshot, TradeRow, ImportSummary, Platform } from '@consolidate/shared';
 
+export interface BinanceSyncStatus {
+  enabled: boolean;
+  seeded: boolean;
+  lastSyncTs: number | null;
+  running: boolean;
+}
+
+export interface BinanceSyncResult {
+  counts: { trades: number; deposits: number; rewards: number; withdrawals: number; errors: number };
+  durationMs: number;
+  symbolsProbed: number;
+}
+
+export interface DimeMailStatus {
+  enabled: boolean;
+  authed: boolean;
+  seeded: boolean;
+  lastSyncTs: number | null;
+  running: boolean;
+  pdfPasswordSet: boolean;
+}
+
+export interface DimeMailResult {
+  counts: {
+    deposits: number;
+    trades: number;
+    pdfsDumped: number;
+    pdfErrors: number;
+    parseErrors: number;
+    mailErrors: number;
+  };
+  durationMs: number;
+  debugDir: string;
+}
+
 const BASE = '/api';
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -26,7 +61,9 @@ export const api = {
       symbol: string;
       todayUSD: number;
       avgUSD: number;
+      heldQty: number;
       series: { t: number; price: number }[];
+      trades: { id: number; ts: number; side: 'BUY' | 'SELL' | 'DIV'; qty: number; price_usd: number; fx_at_trade: number; source: string | null }[];
     }>(`/symbols/${encodeURIComponent(sym)}/history${s ? `?${s}` : ''}`);
   },
   importTradesCsv: async (file: File, platform: Platform): Promise<ImportSummary> => {
@@ -36,4 +73,18 @@ export const api = {
     if (!res.ok) throw new Error(`import ${res.status}: ${await res.text()}`);
     return res.json() as Promise<ImportSummary>;
   },
+  binanceStatus: () => req<BinanceSyncStatus>('/import/binance/status'),
+  binanceSync: () =>
+    req<BinanceSyncResult>('/import/binance', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    }),
+  dimeMailStatus: () => req<DimeMailStatus>('/import/dime/mail/status'),
+  dimeMailSync: () =>
+    req<DimeMailResult>('/import/dime/mail', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    }),
 };

@@ -2,7 +2,7 @@ import { db } from '../db/client.js';
 import { fetchBinancePositions } from './binance.js';
 import { refreshPrices, getCachedPrice } from './prices.js';
 import { getUSDTHB } from './fx.js';
-import { computeAvgFromTrades } from './cost-basis.js';
+import { aggregateTrades } from './cost-basis.js';
 import type { PositionRow, TradeRow } from '../db/types.js';
 import type {
   Platform,
@@ -94,9 +94,23 @@ function enrich(row: {
   };
 }
 
-function sumTotals(rows: EnrichedPosition[]): Totals {
-  return rows.reduce<Totals>(
+const ZERO_TOTALS: Totals = {
+  marketUSD: 0,
+  marketTHB: 0,
+  costUSD: 0,
+  costTHB: 0,
+  pnlUSD: 0,
+  pnlTHB: 0,
+  fxContribTHB: 0,
+  realizedUSD: 0,
+  realizedTHB: 0,
+  realizedFxContribTHB: 0,
+};
+
+function sumTotals(rows: EnrichedPosition[], realized?: RealizedTotals): Totals {
+  const t = rows.reduce<Totals>(
     (a, p) => ({
+      ...a,
       marketUSD: a.marketUSD + p.marketUSD,
       marketTHB: a.marketTHB + p.marketTHB,
       costUSD: a.costUSD + p.costUSD,
@@ -105,8 +119,46 @@ function sumTotals(rows: EnrichedPosition[]): Totals {
       pnlTHB: a.pnlTHB + p.pnlTHB,
       fxContribTHB: a.fxContribTHB + p.fxContribTHB,
     }),
-    { marketUSD: 0, marketTHB: 0, costUSD: 0, costTHB: 0, pnlUSD: 0, pnlTHB: 0, fxContribTHB: 0 },
+    { ...ZERO_TOTALS },
   );
+  if (realized) {
+    t.realizedUSD = realized.realizedUSD;
+    t.realizedTHB = realized.realizedTHB;
+    t.realizedFxContribTHB = realized.realizedFxContribTHB;
+  }
+  return t;
+}
+
+interface RealizedTotals {
+  realizedUSD: number;
+  realizedTHB: number;
+  realizedFxContribTHB: number;
+}
+
+function sumRealized(...rs: RealizedTotals[]): RealizedTotals {
+  return rs.reduce<RealizedTotals>(
+    (a, r) => ({
+      realizedUSD: a.realizedUSD + r.realizedUSD,
+      realizedTHB: a.realizedTHB + r.realizedTHB,
+      realizedFxContribTHB: a.realizedFxContribTHB + r.realizedFxContribTHB,
+    }),
+    { realizedUSD: 0, realizedTHB: 0, realizedFxContribTHB: 0 },
+  );
+}
+
+// Walk every symbol (regardless of current qty) so fully-sold-out
+// positions still contribute to realized totals.
+function realizedAcrossSymbols(tradeMap: Map<string, TradeRow[]>): RealizedTotals {
+  let realizedUSD = 0;
+  let realizedTHB = 0;
+  let realizedFxContribTHB = 0;
+  for (const trades of tradeMap.values()) {
+    const a = aggregateTrades(trades);
+    realizedUSD += a.realizedUSD;
+    realizedTHB += a.realizedTHB;
+    realizedFxContribTHB += a.realizedFxContribTHB;
+  }
+  return { realizedUSD, realizedTHB, realizedFxContribTHB };
 }
 
 function upsertPosition(p: EnrichedPosition) {
@@ -140,7 +192,7 @@ export async function refreshBinance(marketFX: number): Promise<EnrichedPosition
   for (const pos of live) {
     if (pos.qty <= 0 || pos.priceUSD <= 0) continue;
     const trades = tradeMap.get(pos.asset) ?? [];
-    const agg = computeAvgFromTrades(trades);
+    const agg = aggregateTrades(trades);
     const qty = pos.qty;
     const avgUSD = agg.qty > 0 ? agg.avgUSD : pos.priceUSD;
     const costTHB = agg.qty > 0 ? agg.costTHB * (qty / agg.qty) : qty * avgUSD * marketFX;
@@ -161,12 +213,56 @@ export async function refreshBinance(marketFX: number): Promise<EnrichedPosition
   return out;
 }
 
+// Synthesize a DIME USD-cash row only when sells genuinely exceed buys
+// (i.e. the user is actually holding idle USD inside the DIME settlement
+// account). DIME holds THB by default and converts on each BUY, so
+// deposits do NOT translate into a USD balance — modelling them that way
+// over-counted by ~$1.3k against the DIME app. Net residue is computed
+// purely from trades: `usd = sum(SELL.usd) − sum(BUY.usd)`. If positive,
+// emit a cash row with cost = today's FX (we don't track when each
+// proceeds-USD was held, so no FX gain is implied).
+function buildDimeCashRow(
+  tradeMap: Map<string, TradeRow[]>,
+  marketFX: number,
+): EnrichedPosition | null {
+  let usd = 0;
+  for (const trades of tradeMap.values()) {
+    for (const t of trades) {
+      if (t.side === 'BUY') usd -= t.qty * t.price_usd;
+      else if (t.side === 'SELL') usd += t.qty * t.price_usd;
+    }
+  }
+  if (usd <= 0.005) return null; // no idle USD — buys absorbed all sell proceeds
+  const marketTHB = usd * marketFX;
+  return {
+    platform: 'DIME',
+    symbol: 'USD',
+    name: 'DIME USD wallet',
+    sector: 'Cash',
+    qty: usd,
+    avgUSD: 1,
+    priceUSD: 1,
+    fxLocked: marketFX,
+    marketUSD: usd,
+    costUSD: usd,
+    pnlUSD: 0,
+    pnlPct: 0,
+    marketTHB,
+    costTHB: marketTHB,
+    pnlTHB: 0,
+    pnlPctTHB: 0,
+    fxContribTHB: 0,
+  };
+}
+
 // Recompute DIME positions from trades. Cheap (DB-only) so safe on hot path.
-function readDimePositions(marketFX: number): EnrichedPosition[] {
+function readDimePositions(
+  marketFX: number,
+): { positions: EnrichedPosition[]; tradeMap: Map<string, TradeRow[]> } {
   const tradeMap = tradesBySymbol('DIME');
   const out: EnrichedPosition[] = [];
   for (const [symbol, trades] of tradeMap) {
-    const agg = computeAvgFromTrades(trades);
+    const agg = aggregateTrades(trades);
     if (agg.qty <= 0) continue;
     const cached = getCachedPrice(symbol);
     const priceUSD = cached?.price_usd ?? agg.avgUSD;
@@ -184,7 +280,9 @@ function readDimePositions(marketFX: number): EnrichedPosition[] {
     upsertPosition(enriched);
     out.push(enriched);
   }
-  return out;
+  const cash = buildDimeCashRow(tradeMap, marketFX);
+  if (cash) out.push(cash);
+  return { positions: out, tradeMap };
 }
 
 function readBinancePositionsFromDb(marketFX: number): EnrichedPosition[] {
@@ -257,15 +355,20 @@ export async function buildSnapshot(opts: { refresh?: boolean } = {}): Promise<P
     }
   }
 
-  const dime = readDimePositions(fx.rate);
+  const dimeRes = readDimePositions(fx.rate);
+  const dime = dimeRes.positions;
   const binance = readBinancePositionsFromDb(fx.rate);
   const bank = buildBankPositions();
 
+  const dimeRealized = realizedAcrossSymbols(dimeRes.tradeMap);
+  const binanceRealized = realizedAcrossSymbols(tradesBySymbol('Binance'));
+  const allRealized = sumRealized(dimeRealized, binanceRealized);
+
   const totals = {
-    dime: sumTotals(dime),
-    binance: sumTotals(binance),
+    dime: sumTotals(dime, dimeRealized),
+    binance: sumTotals(binance, binanceRealized),
     bank: sumTotals(bank),
-    all: sumTotals([...dime, ...binance, ...bank]),
+    all: sumTotals([...dime, ...binance, ...bank], allRealized),
   };
 
   return {

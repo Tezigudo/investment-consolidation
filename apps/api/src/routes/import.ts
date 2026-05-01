@@ -1,10 +1,27 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { importTradesCsv } from '../services/csv-importer.js';
+import { config } from '../config.js';
+import {
+  importBinanceHistory,
+  isBinanceSyncSeeded,
+  getLastBinanceSyncTs,
+} from '../services/binance-import.js';
+import {
+  importDimeMail,
+  isDimeMailSeeded,
+  getLastDimeMailSyncTs,
+} from '../services/dime-mail.js';
+import { isGmailConfigured, isGmailAuthed } from '../services/gmail-client.js';
 
 const Query = z.object({
   platform: z.enum(['DIME', 'Binance']).default('DIME'),
 });
+
+// Guard against concurrent Binance imports.
+let binanceImportRunning = false;
+// Guard against concurrent DIME mail imports.
+let dimeMailImportRunning = false;
 
 export async function importRoutes(app: FastifyInstance) {
   app.post('/import/trades-csv', async (req, reply) => {
@@ -21,6 +38,76 @@ export async function importRoutes(app: FastifyInstance) {
     } catch (e) {
       reply.code(400);
       return { error: (e as Error).message };
+    }
+  });
+
+  // Binance history sync
+  app.get('/import/binance/status', async () => {
+    return {
+      enabled: config.binanceEnabled,
+      seeded: config.binanceEnabled ? isBinanceSyncSeeded() : false,
+      lastSyncTs: config.binanceEnabled ? getLastBinanceSyncTs() : null,
+      running: binanceImportRunning,
+    };
+  });
+
+  app.post<{ Body: { fullHistory?: boolean } }>('/import/binance', async (req, reply) => {
+    if (!config.binanceEnabled) {
+      reply.code(400);
+      return { error: 'Binance not configured (set BINANCE_API_KEY/SECRET in .env)' };
+    }
+    if (binanceImportRunning) {
+      reply.code(409);
+      return { error: 'Binance import already in progress' };
+    }
+    binanceImportRunning = true;
+    try {
+      const fullHistory = !!(req.body as Record<string, unknown>)?.fullHistory;
+      const result = await importBinanceHistory({
+        sinceMs: fullHistory ? undefined : undefined, // cursors handle incremental
+      });
+      return result;
+    } finally {
+      binanceImportRunning = false;
+    }
+  });
+
+  // DIME mail sync (Gmail). Non-interactive — the first-time OAuth must
+  // be completed from the CLI (`bun run import:dime-mail -- --auth`).
+  app.get('/import/dime/mail/status', async () => {
+    const gmailConfigured = isGmailConfigured();
+    return {
+      enabled: gmailConfigured,
+      authed: gmailConfigured ? isGmailAuthed() : false,
+      seeded: gmailConfigured ? isDimeMailSeeded() : false,
+      lastSyncTs: gmailConfigured ? getLastDimeMailSyncTs() : null,
+      running: dimeMailImportRunning,
+      pdfPasswordSet: !!config.DIME_PDF_PASSWORD,
+    };
+  });
+
+  app.post('/import/dime/mail', async (_req, reply) => {
+    if (!isGmailConfigured()) {
+      reply.code(400);
+      return { error: 'Gmail credentials missing (secrets/gmail-credentials.json)' };
+    }
+    if (!isGmailAuthed()) {
+      reply.code(400);
+      return {
+        error:
+          'Gmail not authorized yet. Run `bun run import:dime-mail -- --auth` once to complete OAuth.',
+      };
+    }
+    if (dimeMailImportRunning) {
+      reply.code(409);
+      return { error: 'DIME mail import already in progress' };
+    }
+    dimeMailImportRunning = true;
+    try {
+      const result = await importDimeMail({ interactive: false });
+      return result;
+    } finally {
+      dimeMailImportRunning = false;
     }
   });
 }

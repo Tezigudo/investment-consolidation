@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { fmtPct, fmtTHB, fmtUSD } from '../lib/format';
@@ -14,9 +14,30 @@ interface Props {
 type Range = '1M' | '3M' | '6M' | '1Y';
 const RANGE_DAYS: Record<Range, number> = { '1M': 30, '3M': 90, '6M': 180, '1Y': 365 };
 
+interface TradeRow {
+  id: number;
+  ts: number;
+  side: 'BUY' | 'SELL' | 'DIV';
+  qty: number;
+  price_usd: number;
+  fx_at_trade: number;
+  source: string | null;
+}
+
+// Sources that represent passive payouts, not user-initiated spot trades.
+// Binance Earn rewards land as `side: 'BUY'` with `source: 'api-reward'`,
+// so filtering by side alone is not enough.
+const REWARD_SOURCES = new Set(['api-reward']);
+function isSpotTrade(t: TradeRow): boolean {
+  if (t.side !== 'BUY' && t.side !== 'SELL') return false;
+  if (t.source && REWARD_SOURCES.has(t.source)) return false;
+  return true;
+}
+
 export function PriceModal({ position, currency, usdthb, onClose }: Props) {
   const [range, setRange] = useState<Range>('6M');
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
+  const [hoverTrade, setHoverTrade] = useState<TradeRow | null>(null);
   const kind = position.platform === 'Binance' ? 'crypto' : 'stock';
 
   const { data } = useQuery({
@@ -39,6 +60,7 @@ export function PriceModal({ position, currency, usdthb, onClose }: Props) {
   }, [onClose]);
 
   const series = data?.series ?? [];
+  const allTrades = data?.trades ?? [];
   const inTHB = currency === 'THB';
   const toDisplay = (usd: number) => (inTHB ? usd * usdthb : usd);
   const fmt = (usd: number) =>
@@ -52,9 +74,24 @@ export function PriceModal({ position, currency, usdthb, onClose }: Props) {
   const min = prices.length ? Math.min(...prices) : 0;
   const max = prices.length ? Math.max(...prices) : 0;
 
+  // Spot trades that fall inside the visible window. Earn/reward rows
+  // are excluded so chart markers only represent buy/sell decisions.
+  const tradesInRange = useMemo(() => {
+    if (!series.length) return [] as TradeRow[];
+    const t0 = series[0].t;
+    const t1 = series[series.length - 1].t + 86_400_000;
+    return allTrades.filter((t) => isSpotTrade(t) && t.ts >= t0 && t.ts < t1);
+  }, [allTrades, series]);
+
   const hover = hoverIdx != null ? series[hoverIdx] : null;
-  const displayPrice = hover ? hover.price : last;
-  const displayDate = hover ? new Date(hover.t) : series.length ? new Date(series[series.length - 1].t) : new Date();
+  const displayPrice = hoverTrade ? hoverTrade.price_usd : hover ? hover.price : last;
+  const displayDate = hoverTrade
+    ? new Date(hoverTrade.ts)
+    : hover
+      ? new Date(hover.t)
+      : series.length
+        ? new Date(series[series.length - 1].t)
+        : new Date();
   const color = change >= 0 ? 'var(--up)' : 'var(--down)';
 
   return (
@@ -76,7 +113,9 @@ export function PriceModal({ position, currency, usdthb, onClose }: Props) {
         onClick={(e) => e.stopPropagation()}
         style={{
           width: '100%',
-          maxWidth: 760,
+          maxWidth: 820,
+          maxHeight: 'calc(100vh - 40px)',
+          overflowY: 'auto',
           background: 'var(--bg)',
           border: '1px solid var(--border)',
           borderRadius: 16,
@@ -153,10 +192,13 @@ export function PriceModal({ position, currency, usdthb, onClose }: Props) {
         <div style={{ marginTop: 18 }}>
           <PricePointChart
             data={series}
+            trades={tradesInRange}
             color={color}
             height={240}
             hoverIdx={hoverIdx}
             onHover={setHoverIdx}
+            hoverTrade={hoverTrade}
+            onHoverTrade={setHoverTrade}
             refLine={position.avgUSD}
             refLabel={`Your avg · ${fmtUSD(position.avgUSD, { dp: position.avgUSD < 10 ? 3 : 2 })}`}
             toDisplay={toDisplay}
@@ -207,6 +249,10 @@ export function PriceModal({ position, currency, usdthb, onClose }: Props) {
             color={position.pnlPct >= 0 ? 'var(--up)' : 'var(--down)'}
           />
         </div>
+
+        {allTrades.length > 0 && (
+          <TradeList trades={allTrades.filter(isSpotTrade)} currency={currency} usdthb={usdthb} />
+        )}
       </div>
     </div>
   );
@@ -223,16 +269,19 @@ function Stat({ label, value, color, muted }: { label: string; value: string; co
 
 interface PPCProps {
   data: { t: number; price: number }[];
+  trades: TradeRow[];
   color: string;
   height?: number;
   hoverIdx: number | null;
   onHover: (i: number | null) => void;
+  hoverTrade: TradeRow | null;
+  onHoverTrade: (t: TradeRow | null) => void;
   refLine?: number;
   refLabel?: string;
   toDisplay: (usd: number) => number;
   fmt: (usd: number) => string;
 }
-function PricePointChart({ data, color, height = 240, hoverIdx, onHover, refLine, refLabel, toDisplay, fmt }: PPCProps) {
+function PricePointChart({ data, trades, color, height = 240, hoverIdx, onHover, hoverTrade, onHoverTrade, refLine, refLabel, toDisplay, fmt }: PPCProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [w, setW] = useState(0);
   useLayoutEffect(() => {
@@ -248,7 +297,8 @@ function PricePointChart({ data, color, height = 240, hoverIdx, onHover, refLine
   const innerH = H - pad.t - pad.b;
   const prices = data.map((d) => toDisplay(d.price));
   const refY = refLine != null ? toDisplay(refLine) : null;
-  const values = refY != null ? [...prices, refY] : prices;
+  const tradePricesDisplay = trades.map((t) => toDisplay(t.price_usd));
+  const values = [...prices, ...tradePricesDisplay, ...(refY != null ? [refY] : [])];
   const min = values.length ? Math.min(...values) : 0;
   const max = values.length ? Math.max(...values) : 1;
   const range = max - min || 1;
@@ -256,7 +306,12 @@ function PricePointChart({ data, color, height = 240, hoverIdx, onHover, refLine
   const pMax = max + range * 0.06;
   const pRange = pMax - pMin || 1;
 
+  const tStart = data[0]?.t ?? 0;
+  const tEnd = data[data.length - 1]?.t ?? 1;
+  const tSpan = Math.max(1, tEnd - tStart);
+
   const x = (i: number) => pad.l + (i / Math.max(1, data.length - 1)) * innerW;
+  const xAtTs = (ts: number) => pad.l + ((ts - tStart) / tSpan) * innerW;
   const y = (v: number) => pad.t + innerH - ((v - pMin) / pRange) * innerH;
 
   const pts = data.map((d, i) => `${x(i)},${y(toDisplay(d.price))}`).join(' ');
@@ -272,21 +327,39 @@ function PricePointChart({ data, color, height = 240, hoverIdx, onHover, refLine
     if (!ref.current) return;
     const rect = ref.current.getBoundingClientRect();
     const px = e.clientX - rect.left;
-    const i = Math.max(
-      0,
-      Math.min(data.length - 1, Math.round(((px - pad.l) / innerW) * (data.length - 1))),
-    );
+    // First, see if the cursor is near a trade marker (within 14px).
+    let nearest: { trade: TradeRow; dist: number } | null = null;
+    for (const t of trades) {
+      const tx = xAtTs(t.ts);
+      const d = Math.abs(px - tx);
+      if (d <= 14 && (!nearest || d < nearest.dist)) nearest = { trade: t, dist: d };
+    }
+    if (nearest) {
+      onHoverTrade(nearest.trade);
+      // Snap series-hover to the closest day for the vertical guide.
+      const i = Math.max(0, Math.min(data.length - 1, Math.round(((px - pad.l) / innerW) * (data.length - 1))));
+      onHover(i);
+      return;
+    }
+    onHoverTrade(null);
+    const i = Math.max(0, Math.min(data.length - 1, Math.round(((px - pad.l) / innerW) * (data.length - 1))));
     onHover(i);
   }
 
   const dateAt = (i: number) => new Date(data[i].t).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+  const tradeColor = (side: TradeRow['side']) =>
+    side === 'BUY' ? 'var(--up)' : side === 'SELL' ? 'var(--down)' : 'var(--muted)';
 
   return (
     <div
       ref={ref}
       style={{ position: 'relative', width: '100%', height: H }}
       onMouseMove={handleMove}
-      onMouseLeave={() => onHover(null)}
+      onMouseLeave={() => {
+        onHover(null);
+        onHoverTrade(null);
+      }}
     >
       {w > 0 && data.length > 0 && (
         <svg width={w} height={H} style={{ display: 'block', overflow: 'visible' }}>
@@ -311,12 +384,28 @@ function PricePointChart({ data, color, height = 240, hoverIdx, onHover, refLine
               <circle key={i} cx={x(i)} cy={y(toDisplay(d.price))} r={2.2} fill="var(--bg)" stroke={color} strokeWidth={1.4} />
             ) : null,
           )}
-          {hoverIdx != null && (
+
+          {/* Trade markers — drawn at trade ts mapped to chart x and trade price mapped to chart y. */}
+          {trades.map((t) => {
+            const cx = xAtTs(t.ts);
+            const cy = y(toDisplay(t.price_usd));
+            const c = tradeColor(t.side);
+            const isHover = hoverTrade?.id === t.id;
+            return (
+              <g key={t.id}>
+                <line x1={cx} x2={cx} y1={pad.t} y2={H - pad.b} stroke={c} strokeWidth={1} strokeDasharray="2 4" opacity={isHover ? 0.55 : 0.18} />
+                <circle cx={cx} cy={cy} r={isHover ? 7 : 5} fill={c} stroke="var(--bg)" strokeWidth={2} />
+              </g>
+            );
+          })}
+
+          {hoverIdx != null && !hoverTrade && (
             <>
               <line x1={x(hoverIdx)} x2={x(hoverIdx)} y1={pad.t} y2={H - pad.b} stroke="currentColor" strokeWidth={1} strokeDasharray="3 3" opacity={0.3} />
               <circle cx={x(hoverIdx)} cy={y(toDisplay(data[hoverIdx].price))} r={5} fill={color} stroke="var(--bg)" strokeWidth={2} />
             </>
           )}
+
           <text x={pad.l} y={H - 6} fontSize={10} fontFamily="var(--mono)" fill="var(--muted)">
             {dateAt(0)}
           </text>
@@ -328,7 +417,46 @@ function PricePointChart({ data, color, height = 240, hoverIdx, onHover, refLine
           </text>
         </svg>
       )}
-      {hoverIdx != null && data[hoverIdx] && (
+
+      {/* Tooltip — trade detail when hovering a marker, plain price otherwise. */}
+      {hoverTrade && (
+        <div
+          style={{
+            position: 'absolute',
+            left: Math.min(Math.max(xAtTs(hoverTrade.ts) - 90, 0), (w || 0) - 200),
+            top: 0,
+            background: 'var(--surface-2)',
+            border: `1px solid ${tradeColor(hoverTrade.side)}`,
+            borderRadius: 8,
+            padding: '8px 12px',
+            fontSize: 11,
+            fontFamily: 'var(--mono)',
+            pointerEvents: 'none',
+            color: 'var(--text)',
+            minWidth: 180,
+            lineHeight: 1.5,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+            <span
+              style={{
+                color: tradeColor(hoverTrade.side),
+                fontWeight: 700,
+                letterSpacing: 0.5,
+              }}
+            >
+              {hoverTrade.side}
+            </span>
+            <span style={{ color: 'var(--muted)' }}>
+              {new Date(hoverTrade.ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+            </span>
+          </div>
+          <div>{hoverTrade.qty} @ {fmt(hoverTrade.price_usd)}</div>
+          <div style={{ color: 'var(--muted)' }}>FX {hoverTrade.fx_at_trade.toFixed(4)} ฿/$</div>
+          <div style={{ color: 'var(--muted)' }}>≈ {fmt(hoverTrade.qty * hoverTrade.price_usd)}</div>
+        </div>
+      )}
+      {!hoverTrade && hoverIdx != null && data[hoverIdx] && (
         <div
           style={{
             position: 'absolute',
@@ -351,3 +479,56 @@ function PricePointChart({ data, color, height = 240, hoverIdx, onHover, refLine
     </div>
   );
 }
+
+function TradeList({ trades, currency, usdthb }: { trades: TradeRow[]; currency: Currency; usdthb: number }) {
+  const sorted = [...trades].sort((a, b) => b.ts - a.ts);
+  const inTHB = currency === 'THB';
+  const fmt = (usd: number) =>
+    inTHB ? fmtTHB(usd * usdthb, { dp: usd < 10 ? 2 : 0 }) : fmtUSD(usd, { dp: usd < 10 ? 3 : 2 });
+  const tradeColor = (side: TradeRow['side']) =>
+    side === 'BUY' ? 'var(--up)' : side === 'SELL' ? 'var(--down)' : 'var(--muted)';
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 8 }}>
+        Transactions ({trades.length})
+      </div>
+      <div
+        style={{
+          maxHeight: 220,
+          overflowY: 'auto',
+          border: '1px solid var(--border)',
+          borderRadius: 10,
+          background: 'var(--surface)',
+        }}
+      >
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'var(--mono)', fontSize: 11 }}>
+          <thead style={{ position: 'sticky', top: 0, background: 'var(--surface)', zIndex: 1 }}>
+            <tr style={{ color: 'var(--muted)', textAlign: 'left' }}>
+              <th style={th}>Date</th>
+              <th style={th}>Side</th>
+              <th style={{ ...th, textAlign: 'right' }}>Qty</th>
+              <th style={{ ...th, textAlign: 'right' }}>Price</th>
+              <th style={{ ...th, textAlign: 'right' }}>FX</th>
+              <th style={{ ...th, textAlign: 'right' }}>Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sorted.map((t) => (
+              <tr key={t.id} style={{ borderTop: '1px solid var(--border)' }}>
+                <td style={td}>{new Date(t.ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}</td>
+                <td style={{ ...td, color: tradeColor(t.side), fontWeight: 700 }}>{t.side}</td>
+                <td style={{ ...td, textAlign: 'right' }}>{t.qty}</td>
+                <td style={{ ...td, textAlign: 'right' }}>{fmt(t.price_usd)}</td>
+                <td style={{ ...td, textAlign: 'right', color: 'var(--muted)' }}>{t.fx_at_trade.toFixed(2)}</td>
+                <td style={{ ...td, textAlign: 'right' }}>{fmt(t.qty * t.price_usd)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+const th: React.CSSProperties = { padding: '8px 12px', fontWeight: 500, fontSize: 10, letterSpacing: 0.4 };
+const td: React.CSSProperties = { padding: '8px 12px' };

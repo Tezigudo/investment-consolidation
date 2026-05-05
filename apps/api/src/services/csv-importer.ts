@@ -1,6 +1,6 @@
 import Papa from 'papaparse';
 import { z } from 'zod';
-import { db } from '../db/client.js';
+import { pool } from '../db/client.js';
 import type { TradeSide, Platform } from '../db/types.js';
 
 // DIME doesn't publish a canonical CSV schema. The importer accepts several
@@ -103,7 +103,10 @@ export interface ImportSummary {
   errors: { row: number; error: string }[];
 }
 
-export function importTradesCsv(csvText: string, platform: Platform = 'DIME'): ImportSummary {
+export async function importTradesCsv(
+  csvText: string,
+  platform: Platform = 'DIME',
+): Promise<ImportSummary> {
   const parsed = Papa.parse<Record<string, unknown>>(csvText, {
     header: true,
     skipEmptyLines: true,
@@ -118,30 +121,6 @@ export function importTradesCsv(csvText: string, platform: Platform = 'DIME'): I
     errors: [],
   };
 
-  const insert = db.prepare(
-    `INSERT INTO trades(platform, symbol, side, qty, price_usd, fx_at_trade, commission, ts, external_id, source)
-     VALUES (@platform, @symbol, @side, @qty, @price_usd, @fx_at_trade, @commission, @ts, @external_id, 'csv')
-     ON CONFLICT(platform, external_id) DO NOTHING`,
-  );
-
-  const tx = db.transaction((rows: z.infer<typeof Row>[]) => {
-    for (const r of rows) {
-      const info = insert.run({
-        platform,
-        symbol: r.symbol.toUpperCase(),
-        side: r.side,
-        qty: r.qty,
-        price_usd: r.price_usd,
-        fx_at_trade: r.fx_at_trade,
-        commission: r.commission,
-        ts: r.ts,
-        external_id: r.external_id ?? `${platform}:${r.symbol}:${r.ts}:${r.qty}:${r.price_usd}`,
-      });
-      if (info.changes > 0) summary.imported++;
-      else summary.skipped++;
-    }
-  });
-
   const valid: z.infer<typeof Row>[] = [];
   parsed.data.forEach((raw, i) => {
     try {
@@ -151,6 +130,39 @@ export function importTradesCsv(csvText: string, platform: Platform = 'DIME'): I
     }
   });
 
-  tx(valid);
+  if (!valid.length) return summary;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const r of valid) {
+      const externalId = r.external_id ?? `${platform}:${r.symbol}:${r.ts}:${r.qty}:${r.price_usd}`;
+      const res = await client.query(
+        `INSERT INTO trades(platform, symbol, side, qty, price_usd, fx_at_trade, commission, ts, external_id, source)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'csv')
+         ON CONFLICT (platform, external_id) DO NOTHING`,
+        [
+          platform,
+          r.symbol.toUpperCase(),
+          r.side,
+          r.qty,
+          r.price_usd,
+          r.fx_at_trade,
+          r.commission,
+          r.ts,
+          externalId,
+        ],
+      );
+      if ((res.rowCount ?? 0) > 0) summary.imported++;
+      else summary.skipped++;
+    }
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+
   return summary;
 }

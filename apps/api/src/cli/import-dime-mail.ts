@@ -25,7 +25,7 @@ if (!isGmailAuthed()) {
   console.log('[import:dime-mail] no cached Gmail token — running OAuth first…');
 }
 
-const last = getLastDimeMailSyncTs();
+const last = await getLastDimeMailSyncTs();
 const label = last
   ? ` (incremental, last sync: ${new Date(last).toISOString().slice(0, 19).replace('T', ' ')} UTC)`
   : ' (first run)';

@@ -13,6 +13,7 @@ import {
   getLastDimeMailSyncTs,
 } from '../services/dime-mail.js';
 import { isGmailConfigured, isGmailAuthed } from '../services/gmail-client.js';
+import { refreshOnChainWLD } from '../services/onchain.js';
 
 const Query = z.object({
   platform: z.enum(['DIME', 'Binance']).default('DIME'),
@@ -34,7 +35,7 @@ export async function importRoutes(app: FastifyInstance) {
     const buf = await file.toBuffer();
     const text = buf.toString('utf8');
     try {
-      return importTradesCsv(text, platform);
+      return await importTradesCsv(text, platform);
     } catch (e) {
       reply.code(400);
       return { error: (e as Error).message };
@@ -45,8 +46,8 @@ export async function importRoutes(app: FastifyInstance) {
   app.get('/import/binance/status', async () => {
     return {
       enabled: config.binanceEnabled,
-      seeded: config.binanceEnabled ? isBinanceSyncSeeded() : false,
-      lastSyncTs: config.binanceEnabled ? getLastBinanceSyncTs() : null,
+      seeded: config.binanceEnabled ? await isBinanceSyncSeeded() : false,
+      lastSyncTs: config.binanceEnabled ? await getLastBinanceSyncTs() : null,
       running: binanceImportRunning,
     };
   });
@@ -79,8 +80,8 @@ export async function importRoutes(app: FastifyInstance) {
     return {
       enabled: gmailConfigured,
       authed: gmailConfigured ? isGmailAuthed() : false,
-      seeded: gmailConfigured ? isDimeMailSeeded() : false,
-      lastSyncTs: gmailConfigured ? getLastDimeMailSyncTs() : null,
+      seeded: gmailConfigured ? await isDimeMailSeeded() : false,
+      lastSyncTs: gmailConfigured ? await getLastDimeMailSyncTs() : null,
       running: dimeMailImportRunning,
       pdfPasswordSet: !!config.DIME_PDF_PASSWORD,
     };
@@ -108,6 +109,30 @@ export async function importRoutes(app: FastifyInstance) {
       return result;
     } finally {
       dimeMailImportRunning = false;
+    }
+  });
+
+  // On-chain WLD: status + manual refresh ("Sync now" button can hit this).
+  app.get('/import/onchain/status', async () => {
+    return {
+      enabled: config.onchainEnabled,
+      wallet: config.ONCHAIN_WLD_WALLET || null,
+      vaults: config.ONCHAIN_WLD_VAULTS,
+      costUSD: config.ONCHAIN_WLD_COST_USD,
+    };
+  });
+
+  app.post('/import/onchain/sync', async (_req, reply) => {
+    if (!config.onchainEnabled) {
+      reply.code(400);
+      return { error: 'on-chain sync disabled (set ONCHAIN_WLD_WALLET in .env)' };
+    }
+    try {
+      const snap = await refreshOnChainWLD();
+      return snap;
+    } catch (e) {
+      reply.code(500);
+      return { error: (e as Error).message };
     }
   });
 }

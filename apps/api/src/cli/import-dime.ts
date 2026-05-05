@@ -18,5 +18,5 @@ if (!fs.existsSync(abs)) {
 }
 
 const text = fs.readFileSync(abs, 'utf8');
-const summary = importTradesCsv(text, platform);
+const summary = await importTradesCsv(text, platform);
 console.log(JSON.stringify(summary, null, 2));

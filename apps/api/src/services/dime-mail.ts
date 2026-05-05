@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 // browser. Node-compatible surface, same API.
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { gmail_v1 } from 'googleapis';
-import { db } from '../db/client.js';
+import { pool } from '../db/client.js';
 import { config } from '../config.js';
 import { getGmailClient, gmail } from './gmail-client.js';
 import { getUSDTHBForTs } from './fx-history.js';
@@ -36,32 +36,35 @@ interface Cursor {
   last_ts: number | null;
 }
 
-function readCursor(endpoint: string): Cursor {
-  const row = db
-    .prepare('SELECT last_ts FROM dime_sync_state WHERE endpoint = ?')
-    .get(endpoint) as Cursor | undefined;
-  return row ?? { last_ts: null };
+async function readCursor(endpoint: string): Promise<Cursor> {
+  const { rows } = await pool.query<Cursor>(
+    'SELECT last_ts FROM dime_sync_state WHERE endpoint = $1',
+    [endpoint],
+  );
+  return rows[0] ?? { last_ts: null };
 }
 
-function writeCursor(endpoint: string, lastTs: number): void {
-  db.prepare(
+async function writeCursor(endpoint: string, lastTs: number): Promise<void> {
+  await pool.query(
     `INSERT INTO dime_sync_state(endpoint, last_ts, updated_at)
-     VALUES (?, ?, ?)
-     ON CONFLICT(endpoint) DO UPDATE SET
-       last_ts = excluded.last_ts,
-       updated_at = excluded.updated_at`,
-  ).run(endpoint, lastTs, Date.now());
+     VALUES ($1, $2, $3)
+     ON CONFLICT (endpoint) DO UPDATE SET
+       last_ts = EXCLUDED.last_ts,
+       updated_at = EXCLUDED.updated_at`,
+    [endpoint, lastTs, Date.now()],
+  );
 }
 
-export function isDimeMailSeeded(): boolean {
-  return !!db.prepare('SELECT 1 FROM dime_sync_state LIMIT 1').get();
+export async function isDimeMailSeeded(): Promise<boolean> {
+  const { rows } = await pool.query('SELECT 1 FROM dime_sync_state LIMIT 1');
+  return rows.length > 0;
 }
 
-export function getLastDimeMailSyncTs(): number | null {
-  const row = db
-    .prepare('SELECT MAX(updated_at) AS ts FROM dime_sync_state')
-    .get() as { ts: number | null } | undefined;
-  return row?.ts ?? null;
+export async function getLastDimeMailSyncTs(): Promise<number | null> {
+  const { rows } = await pool.query<{ ts: number | null }>(
+    'SELECT MAX(updated_at) AS ts FROM dime_sync_state',
+  );
+  return rows[0]?.ts ?? null;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -299,8 +302,10 @@ async function pdfToText(buffer: Buffer, password: string): Promise<string> {
     data: new Uint8Array(buffer),
     password,
     useSystemFonts: true,
+    // pdfjs-dist 5.7 dropped `isEvalSupported` from the public type but
+    // still honors it at runtime — keep it for the security posture.
     isEvalSupported: false,
-  });
+  } as Parameters<typeof getDocument>[0]);
   const pdf = await loadingTask.promise;
   const pages: string[] = [];
   for (let i = 1; i <= pdf.numPages; i++) {
@@ -318,17 +323,22 @@ async function pdfToText(buffer: Buffer, password: string): Promise<string> {
 // DB writers
 // ──────────────────────────────────────────────────────────────
 
-const insertDeposit = db.prepare(
-  `INSERT INTO deposits(platform, amount_thb, amount_usd, fx_locked, ts, note, source)
-   VALUES (@platform, @amount_thb, @amount_usd, @fx_locked, @ts, @note, @source)
-   ON CONFLICT(platform, source) DO NOTHING`,
-);
-
-const insertTrade = db.prepare(
-  `INSERT INTO trades(platform, symbol, side, qty, price_usd, fx_at_trade, commission, ts, external_id, source)
-   VALUES (@platform, @symbol, @side, @qty, @price_usd, @fx_at_trade, @commission, @ts, @external_id, @source)
-   ON CONFLICT(platform, external_id) DO NOTHING`,
-);
+async function insertDimeDeposit(d: {
+  amount_thb: number;
+  amount_usd: number;
+  fx_locked: number;
+  ts: number;
+  note: string;
+  source: string;
+}): Promise<boolean> {
+  const res = await pool.query(
+    `INSERT INTO deposits(platform, amount_thb, amount_usd, fx_locked, ts, note, source)
+     VALUES ('DIME', $1, $2, $3, $4, $5, $6)
+     ON CONFLICT (platform, source) DO NOTHING`,
+    [d.amount_thb, d.amount_usd, d.fx_locked, d.ts, d.note, d.source],
+  );
+  return (res.rowCount ?? 0) > 0;
+}
 
 // SEL → SELL, REW → DIV (reward shares ≈ dividend-like).
 // EXC/EXP (option exercise) skipped — never seen in dumps; revisit if encountered.
@@ -339,22 +349,29 @@ function dimeSideToTradeSide(s: DimeSide): 'BUY' | 'SELL' | 'DIV' | null {
   return null;
 }
 
-function insertDimeTrade(t: DimeTradeRow, effectiveTs: number, fx: number): boolean {
+async function insertDimeTrade(
+  t: DimeTradeRow,
+  effectiveTs: number,
+  fx: number,
+): Promise<boolean> {
   const side = dimeSideToTradeSide(t.type);
   if (!side) return false;
-  const info = insertTrade.run({
-    platform: 'DIME',
-    symbol: t.symbol,
-    side,
-    qty: t.qty,
-    price_usd: t.unitPrice,
-    fx_at_trade: fx,
-    commission: t.feeCcy,
-    ts: effectiveTs,
-    external_id: `dime:order:${t.orderId}`,
-    source: 'mail-pdf',
-  });
-  return info.changes > 0;
+  const res = await pool.query(
+    `INSERT INTO trades(platform, symbol, side, qty, price_usd, fx_at_trade, commission, ts, external_id, source)
+     VALUES ('DIME', $1, $2, $3, $4, $5, $6, $7, $8, 'mail-pdf')
+     ON CONFLICT (platform, external_id) DO NOTHING`,
+    [
+      t.symbol,
+      side,
+      t.qty,
+      t.unitPrice,
+      fx,
+      t.feeCcy,
+      effectiveTs,
+      `dime:order:${t.orderId}`,
+    ],
+  );
+  return (res.rowCount ?? 0) > 0;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -397,7 +414,7 @@ async function importKkpInbound(
   progress: (s: string) => void,
 ): Promise<void> {
   const cursorKey = 'kkp-inbound';
-  const cursor = readCursor(cursorKey);
+  const cursor = await readCursor(cursorKey);
   const query = buildIncrementalQuery(KKP_QUERY, cursor.last_ts);
   let seen = 0;
   let lastTs = cursor.last_ts ?? 0;
@@ -425,8 +442,7 @@ async function importKkpInbound(
         if (parsed.account === 'X1270') {
           const fx = await getUSDTHBForTs(parsed.ts);
           const amountUsd = parsed.amountThb / fx;
-          const info = insertDeposit.run({
-            platform: 'DIME',
+          const inserted = await insertDimeDeposit({
             amount_thb: parsed.amountThb,
             amount_usd: amountUsd,
             fx_locked: fx,
@@ -434,7 +450,7 @@ async function importKkpInbound(
             note: `kkp-inbound ${parsed.amountThb} THB to ${parsed.account} @ ${fx.toFixed(4)}`,
             source: `mail:kkp:${msgId}`,
           });
-          if (info.changes > 0) counts.deposits++;
+          if (inserted) counts.deposits++;
         }
       }
       if (internalDate > lastTs) lastTs = internalDate;
@@ -444,7 +460,7 @@ async function importKkpInbound(
     }
     if (seen % 25 === 0) progress(`kkp: ${seen} scanned, +${counts.deposits} deposits`);
   }
-  if (lastTs > (cursor.last_ts ?? 0)) writeCursor(cursorKey, lastTs);
+  if (lastTs > (cursor.last_ts ?? 0)) await writeCursor(cursorKey, lastTs);
 }
 
 async function importDimeConfirmations(
@@ -460,7 +476,7 @@ async function importDimeConfirmations(
   fs.mkdirSync(DEBUG_DIR, { recursive: true });
 
   const cursorKey = 'dime-confirmation';
-  const cursor = readCursor(cursorKey);
+  const cursor = await readCursor(cursorKey);
   const query = buildIncrementalQuery(DIME_QUERY, cursor.last_ts);
   let seen = 0;
   let lastTs = cursor.last_ts ?? 0;
@@ -524,7 +540,7 @@ async function importDimeConfirmations(
     }
 
     // Parse + insert trades (works for both freshly downloaded and
-    // previously dumped texts — INSERT OR IGNORE handles dedup).
+    // previously dumped texts — ON CONFLICT DO NOTHING handles dedup).
     if (text) {
       const conf = parseDimeConfirmation(text);
       if (!conf || conf.trades.length === 0) {
@@ -532,7 +548,7 @@ async function importDimeConfirmations(
         console.warn(`[dime-mail] no trades parsed from ${msgId}`);
       } else {
         for (const tr of conf.trades) {
-          if (insertDimeTrade(tr, conf.effectiveTs, conf.fxThbPerUsd)) {
+          if (await insertDimeTrade(tr, conf.effectiveTs, conf.fxThbPerUsd)) {
             counts.trades++;
           }
         }
@@ -542,7 +558,7 @@ async function importDimeConfirmations(
     if (internalDate > lastTs) lastTs = internalDate;
     if (seen % 10 === 0) progress(`dime: ${seen} scanned, +${counts.trades} trades, +${counts.pdfsDumped} pdfs dumped`);
   }
-  if (lastTs > (cursor.last_ts ?? 0)) writeCursor(cursorKey, lastTs);
+  if (lastTs > (cursor.last_ts ?? 0)) await writeCursor(cursorKey, lastTs);
 }
 
 export interface DimeMailOpts {

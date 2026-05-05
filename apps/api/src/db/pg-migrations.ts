@@ -1,0 +1,187 @@
+import type { Pool } from 'pg';
+
+// Postgres translation of src/db/migrations.ts. Same monotonic versions
+// so a single _migrations table can host both histories during the cut-
+// over window: the data port script copies sqlite's _migrations rows
+// over verbatim, and this runner becomes a no-op for already-applied
+// versions. New migrations should be appended here only.
+//
+// Translation rules:
+//   INTEGER PRIMARY KEY AUTOINCREMENT  -> BIGSERIAL PRIMARY KEY
+//   ms-epoch INTEGER                   -> BIGINT
+//   REAL                               -> DOUBLE PRECISION
+//   TEXT                               -> TEXT (unchanged)
+//   INSERT OR IGNORE                   -> INSERT ... ON CONFLICT DO NOTHING
+//   ?,?                                -> $1,$2 (call-site concern, not here)
+
+type Migration = { version: number; name: string; up: string };
+
+export const PG_MIGRATIONS: Migration[] = [
+  {
+    version: 1,
+    name: 'initial',
+    up: `
+      CREATE TABLE IF NOT EXISTS _migrations (
+        version    INTEGER PRIMARY KEY,
+        name       TEXT NOT NULL,
+        applied_at BIGINT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS deposits (
+        id           BIGSERIAL PRIMARY KEY,
+        platform     TEXT NOT NULL,
+        amount_thb   DOUBLE PRECISION NOT NULL,
+        amount_usd   DOUBLE PRECISION NOT NULL,
+        fx_locked    DOUBLE PRECISION NOT NULL,
+        ts           BIGINT NOT NULL,
+        note         TEXT,
+        source       TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_deposits_ts ON deposits(ts);
+
+      CREATE TABLE IF NOT EXISTS trades (
+        id           BIGSERIAL PRIMARY KEY,
+        platform     TEXT NOT NULL,
+        symbol       TEXT NOT NULL,
+        side         TEXT NOT NULL CHECK (side IN ('BUY', 'SELL', 'DIV')),
+        qty          DOUBLE PRECISION NOT NULL,
+        price_usd    DOUBLE PRECISION NOT NULL,
+        fx_at_trade  DOUBLE PRECISION NOT NULL,
+        commission   DOUBLE PRECISION DEFAULT 0,
+        ts           BIGINT NOT NULL,
+        external_id  TEXT,
+        source       TEXT,
+        UNIQUE(platform, external_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_trades_ts     ON trades(ts);
+      CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
+
+      CREATE TABLE IF NOT EXISTS positions (
+        platform       TEXT NOT NULL,
+        symbol         TEXT NOT NULL,
+        name           TEXT,
+        qty            DOUBLE PRECISION NOT NULL,
+        avg_cost_usd   DOUBLE PRECISION NOT NULL,
+        cost_basis_thb DOUBLE PRECISION NOT NULL,
+        sector         TEXT,
+        updated_at     BIGINT NOT NULL,
+        PRIMARY KEY (platform, symbol)
+      );
+
+      CREATE TABLE IF NOT EXISTS cash (
+        platform   TEXT PRIMARY KEY,
+        label      TEXT NOT NULL,
+        amount_thb DOUBLE PRECISION NOT NULL DEFAULT 0,
+        amount_usd DOUBLE PRECISION NOT NULL DEFAULT 0,
+        updated_at BIGINT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS prices (
+        symbol     TEXT PRIMARY KEY,
+        price_usd  DOUBLE PRECISION NOT NULL,
+        source     TEXT,
+        ts         BIGINT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS fx_rates (
+        pair       TEXT PRIMARY KEY,
+        rate       DOUBLE PRECISION NOT NULL,
+        source     TEXT,
+        ts         BIGINT NOT NULL
+      );
+    `,
+  },
+  {
+    version: 2,
+    name: 'history_import',
+    up: `
+      CREATE TABLE IF NOT EXISTS fx_daily (
+        pair   TEXT NOT NULL,
+        date   TEXT NOT NULL,
+        rate   DOUBLE PRECISION NOT NULL,
+        source TEXT,
+        PRIMARY KEY (pair, date)
+      );
+      CREATE INDEX IF NOT EXISTS idx_fx_daily_pair_date ON fx_daily(pair, date);
+
+      CREATE TABLE IF NOT EXISTS prices_daily (
+        asset     TEXT NOT NULL,
+        date      TEXT NOT NULL,
+        price_usd DOUBLE PRECISION NOT NULL,
+        source    TEXT,
+        PRIMARY KEY (asset, date)
+      );
+
+      CREATE TABLE IF NOT EXISTS binance_sync_state (
+        endpoint    TEXT PRIMARY KEY,
+        last_id     BIGINT,
+        last_ts     BIGINT,
+        updated_at  BIGINT NOT NULL
+      );
+    `,
+  },
+  {
+    version: 3,
+    name: 'deposits_dedup',
+    up: `
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_deposits_platform_source
+        ON deposits(platform, source);
+    `,
+  },
+  {
+    version: 4,
+    name: 'dime_mail_sync',
+    up: `
+      CREATE TABLE IF NOT EXISTS dime_sync_state (
+        endpoint   TEXT PRIMARY KEY,
+        last_ts    BIGINT,
+        updated_at BIGINT NOT NULL
+      );
+    `,
+  },
+  {
+    version: 5,
+    name: 'prices_daily_fetch_state',
+    up: `
+      CREATE TABLE IF NOT EXISTS prices_daily_fetch (
+        asset            TEXT PRIMARY KEY,
+        last_fetched_at  BIGINT NOT NULL
+      );
+    `,
+  },
+];
+
+export async function runPgMigrations(pool: Pool) {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS _migrations (
+      version    INTEGER PRIMARY KEY,
+      name       TEXT NOT NULL,
+      applied_at BIGINT NOT NULL
+    );
+  `);
+
+  const { rows } = await pool.query<{ version: number }>('SELECT version FROM _migrations');
+  const applied = new Set(rows.map((r) => Number(r.version)));
+
+  const client = await pool.connect();
+  try {
+    for (const m of PG_MIGRATIONS) {
+      if (applied.has(m.version)) continue;
+      await client.query('BEGIN');
+      try {
+        await client.query(m.up);
+        await client.query(
+          'INSERT INTO _migrations(version, name, applied_at) VALUES ($1, $2, $3)',
+          [m.version, m.name, Date.now()],
+        );
+        await client.query('COMMIT');
+        console.log(`[pg] applied migration ${m.version}: ${m.name}`);
+      } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+      }
+    }
+  } finally {
+    client.release();
+  }
+}

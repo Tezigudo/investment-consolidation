@@ -8,9 +8,12 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "bun run --filter './apps/*' dev",
+    "dev": "bun run --filter '@consolidate/api' --filter '@consolidate/web' dev",
     "dev:api": "bun run --filter @consolidate/api dev",
     "dev:web": "bun run --filter @consolidate/web dev",
+    "dev:mobile": "cd apps/mobile && bun run lan",
+    "dev:mobile:tunnel": "cd apps/mobile && bun run start",
+    "ios": "cd apps/mobile && bun run ios",
     "build": "bun run build:api && bun run build:web",
     "build:api": "bun run --filter @consolidate/api build",
     "build:web": "bun run --filter @consolidate/web build",
@@ -18,6 +21,7 @@
     "typecheck": "bun run --filter './apps/*' typecheck",
     "typecheck:api": "bun run --filter @consolidate/api typecheck",
     "typecheck:web": "bun run --filter @consolidate/web typecheck",
+    "typecheck:mobile": "bun run --filter @consolidate/mobile typecheck",
     "import:dime": "bun run --filter @consolidate/api import:dime --",
     "import:dime-mail": "bun run --filter @consolidate/api import:dime-mail --",
     "import:binance": "bun run --filter @consolidate/api import:binance --"

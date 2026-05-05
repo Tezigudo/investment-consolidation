@@ -27,11 +27,18 @@ export function SettingsPopover() {
     return () => window.removeEventListener('mousedown', onClick);
   }, [open]);
 
-  const save = () => {
-    if (url.trim()) setApiUrl(url);
-    if (token.trim()) setApiToken(token);
+  const save = async () => {
+    // Always call setters — passing empty string removes the localStorage
+    // key so the user can reset to the default /api base or no-auth state.
+    setApiUrl(url);
+    setApiToken(token);
     setSaved('Saved · refetching…');
-    qc.invalidateQueries();
+    try {
+      await qc.invalidateQueries();
+      setSaved('Saved ✓');
+    } catch {
+      setSaved('Saved (refetch error)');
+    }
     setTimeout(() => setSaved(null), 2000);
   };
 
@@ -128,7 +135,7 @@ export function SettingsPopover() {
             <span style={{ marginLeft: 10, fontSize: 11, color: 'var(--muted)' }}>{saved}</span>
           )}
           <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 10, lineHeight: 1.5 }}>
-            Stored in browser localStorage. Leave URL blank in dev — Vite proxies /api → :4000.
+            Stored in browser localStorage. Leave URL blank to reset to default (/api in dev, VITE_API_URL in prod). Leave token blank to remove auth.
           </div>
         </div>
       )}

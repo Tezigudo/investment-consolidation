@@ -60,10 +60,14 @@ function readToken(): string {
 }
 
 export function setApiUrl(url: string) {
-  localStorage.setItem(URL_KEY, url.trim().replace(/\/$/, ''));
+  const v = url.trim().replace(/\/$/, '');
+  if (v) localStorage.setItem(URL_KEY, v);
+  else localStorage.removeItem(URL_KEY);
 }
 export function setApiToken(token: string) {
-  localStorage.setItem(TOKEN_KEY, token.trim());
+  const v = token.trim();
+  if (v) localStorage.setItem(TOKEN_KEY, v);
+  else localStorage.removeItem(TOKEN_KEY);
 }
 export function getApiUrl(): string {
   return readBase();
@@ -111,16 +115,10 @@ export const api = {
   importTradesCsv: async (file: File, platform: Platform): Promise<ImportSummary> => {
     const body = new FormData();
     body.append('file', file);
-    const headers = new Headers();
-    const token = readToken();
-    if (token) headers.set('Authorization', `Bearer ${token}`);
-    const res = await fetch(`${readBase()}/import/trades-csv?platform=${platform}`, {
+    return req<ImportSummary>(`/import/trades-csv?platform=${platform}`, {
       method: 'POST',
       body,
-      headers,
     });
-    if (!res.ok) throw new Error(`import ${res.status}: ${await res.text()}`);
-    return res.json() as Promise<ImportSummary>;
   },
   binanceStatus: () => req<BinanceSyncStatus>('/import/binance/status'),
   binanceSync: () =>

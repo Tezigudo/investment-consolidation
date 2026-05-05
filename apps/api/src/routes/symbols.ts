@@ -83,24 +83,15 @@ async function writeDailyCache(
   points: { day: number; price: number }[],
 ): Promise<void> {
   if (!points.length) return;
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    for (const p of points) {
-      await client.query(
-        `INSERT INTO prices_daily(asset, date, price_usd, source)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (asset, date) DO UPDATE SET price_usd = EXCLUDED.price_usd, source = EXCLUDED.source`,
-        [asset, dateKey(p.day), p.price, source],
-      );
-    }
-    await client.query('COMMIT');
-  } catch (e) {
-    await client.query('ROLLBACK');
-    throw e;
-  } finally {
-    client.release();
-  }
+  const dates = points.map((p) => dateKey(p.day));
+  const prices = points.map((p) => p.price);
+  await pool.query(
+    `INSERT INTO prices_daily(asset, date, price_usd, source)
+     SELECT $1, date, price_usd, $4
+     FROM unnest($2::text[], $3::numeric[]) AS t(date, price_usd)
+     ON CONFLICT (asset, date) DO UPDATE SET price_usd = EXCLUDED.price_usd, source = EXCLUDED.source`,
+    [asset, dates, prices, source],
+  );
 }
 
 async function fetchCryptoDaily(asset: string, fromDay: number, toDay: number): Promise<{ day: number; price: number }[]> {

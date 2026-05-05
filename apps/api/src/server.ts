@@ -43,7 +43,7 @@ if (config.authEnabled) {
     const header = req.headers.authorization || '';
     const match = /^Bearer\s+(.+)$/i.exec(header);
     if (!match || match[1] !== config.API_AUTH_TOKEN) {
-      reply.code(401).send({ error: 'unauthorized' });
+      return reply.code(401).send({ error: 'unauthorized' });
     }
   });
 } else {

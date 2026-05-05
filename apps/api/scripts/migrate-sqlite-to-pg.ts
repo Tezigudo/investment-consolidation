@@ -86,18 +86,18 @@ async function main() {
     conflict: '(id)',
   });
 
-  // trades: same — preserve ids, dedupe on (platform, external_id).
-  // Two unique constraints: (id) PK and (platform, external_id). Conflict
-  // on either should be a no-op. Postgres only allows one ON CONFLICT
-  // target per insert, so we do it in two passes: first insert dropping
-  // duplicates by external_id, then a second pass would also dedupe by
-  // id — but since sqlite already enforced both, in practice every row
-  // is unique on both keys. Use the natural-key conflict.
+  // trades: preserve SQLite ids (BIGSERIAL on pg side) and conflict on
+  // the PK so re-runs are idempotent for ALL rows — including rows where
+  // external_id IS NULL. In Postgres, a unique index treats NULLs as
+  // distinct, so `ON CONFLICT (platform, external_id)` would not match
+  // NULL-external_id rows on re-runs and would error on the PK instead.
+  // Using `(id)` is safe because SQLite already enforced uniqueness on
+  // both (id) and (platform, external_id) before this script runs.
   await copyTable({
     table: 'trades',
     rows: rowsOf('trades'),
     columns: ['id', 'platform', 'symbol', 'side', 'qty', 'price_usd', 'fx_at_trade', 'commission', 'ts', 'external_id', 'source'],
-    conflict: '(platform, external_id)',
+    conflict: '(id)',
   });
 
   await copyTable({

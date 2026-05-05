@@ -1,6 +1,6 @@
 import { pool } from '../db/client.js';
 import { fetchBinancePositions } from './binance.js';
-import { refreshPrices, getCachedPrice } from './prices.js';
+import { refreshPrices, getCachedPrices } from './prices.js';
 import { getUSDTHB } from './fx.js';
 import { aggregateTrades } from './cost-basis.js';
 import type { PositionRow, TradeRow } from '../db/types.js';
@@ -261,11 +261,19 @@ async function readDimePositions(
   marketFX: number,
 ): Promise<{ positions: EnrichedPosition[]; tradeMap: Map<string, TradeRow[]> }> {
   const tradeMap = await tradesBySymbol('DIME');
+
+  // Aggregate all symbols first so we know which are active, then batch
+  // fetch their prices in one query instead of one query per symbol.
+  const aggs = new Map<string, ReturnType<typeof aggregateTrades>>();
+  for (const [symbol, trades] of tradeMap) aggs.set(symbol, aggregateTrades(trades));
+  const activeSymbols = [...aggs.entries()].filter(([, a]) => a.qty > 0).map(([s]) => s);
+  const priceMap = await getCachedPrices(activeSymbols);
+
   const out: EnrichedPosition[] = [];
-  for (const [symbol, trades] of tradeMap) {
-    const agg = aggregateTrades(trades);
+  for (const [symbol] of tradeMap) {
+    const agg = aggs.get(symbol)!
     if (agg.qty <= 0) continue;
-    const cached = await getCachedPrice(symbol);
+    const cached = priceMap.get(symbol);
     const priceUSD = cached?.price_usd ?? agg.avgUSD;
     const meta = STOCK_META[symbol];
     const enriched = enrich({
@@ -296,9 +304,10 @@ async function readOnChainPositionsFromDb(marketFX: number): Promise<EnrichedPos
   const { rows } = await pool.query<PositionRow>(
     "SELECT * FROM positions WHERE platform = 'OnChain'",
   );
+  const priceMap = await getCachedPrices(rows.map((p) => p.symbol));
   const out: EnrichedPosition[] = [];
   for (const p of rows) {
-    const cached = await getCachedPrice(p.symbol);
+    const cached = priceMap.get(p.symbol);
     const priceUSD = cached?.price_usd ?? p.avg_cost_usd;
     out.push(
       enrich({
@@ -323,9 +332,10 @@ async function readBinancePositionsFromDb(
   const { rows } = await pool.query<PositionRow>(
     "SELECT * FROM positions WHERE platform = 'Binance'",
   );
+  const priceMap = await getCachedPrices(rows.map((p) => p.symbol));
   const out: EnrichedPosition[] = [];
   for (const p of rows) {
-    const cached = await getCachedPrice(p.symbol);
+    const cached = priceMap.get(p.symbol);
     const priceUSD = cached?.price_usd ?? p.avg_cost_usd;
     const agg = aggregateTrades(tradeMap.get(p.symbol) ?? []);
     out.push(

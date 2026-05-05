@@ -64,23 +64,15 @@ export async function backfillUSDTHB(startDate: string, endDate?: string): Promi
   const rows = await fetchYahooDailyRange(startMs, endMs);
   if (!rows.length) return 0;
 
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    for (const r of rows) {
-      await client.query(
-        `INSERT INTO fx_daily(pair, date, rate, source) VALUES ('USDTHB', $1, $2, 'yahoo')
-         ON CONFLICT (pair, date) DO UPDATE SET rate = EXCLUDED.rate, source = EXCLUDED.source`,
-        [r.date, r.rate],
-      );
-    }
-    await client.query('COMMIT');
-  } catch (e) {
-    await client.query('ROLLBACK');
-    throw e;
-  } finally {
-    client.release();
-  }
+  const dates = rows.map((r) => r.date);
+  const rates = rows.map((r) => r.rate);
+  await pool.query(
+    `INSERT INTO fx_daily(pair, date, rate, source)
+     SELECT 'USDTHB', date, rate, 'yahoo'
+     FROM unnest($1::text[], $2::numeric[]) AS t(date, rate)
+     ON CONFLICT (pair, date) DO UPDATE SET rate = EXCLUDED.rate, source = EXCLUDED.source`,
+    [dates, rates],
+  );
   return rows.length;
 }
 

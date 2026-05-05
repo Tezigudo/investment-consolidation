@@ -48,6 +48,15 @@ export async function getCachedPrice(symbol: string): Promise<PriceRow | undefin
   return rows[0];
 }
 
+export async function getCachedPrices(symbols: string[]): Promise<Map<string, PriceRow>> {
+  if (!symbols.length) return new Map();
+  const { rows } = await pool.query<PriceRow>(
+    'SELECT symbol, price_usd, source, ts FROM prices WHERE symbol = ANY($1)',
+    [symbols],
+  );
+  return new Map(rows.map((r) => [r.symbol, r]));
+}
+
 async function writePrice(symbol: string, price: number, source: Source): Promise<void> {
   await pool.query(
     `INSERT INTO prices(symbol, price_usd, source, ts) VALUES ($1, $2, $3, $4)

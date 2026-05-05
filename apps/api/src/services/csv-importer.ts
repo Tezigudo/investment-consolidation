@@ -132,37 +132,28 @@ export async function importTradesCsv(
 
   if (!valid.length) return summary;
 
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    for (const r of valid) {
-      const externalId = r.external_id ?? `${platform}:${r.symbol}:${r.ts}:${r.qty}:${r.price_usd}`;
-      const res = await client.query(
-        `INSERT INTO trades(platform, symbol, side, qty, price_usd, fx_at_trade, commission, ts, external_id, source)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'csv')
-         ON CONFLICT (platform, external_id) DO NOTHING`,
-        [
-          platform,
-          r.symbol.toUpperCase(),
-          r.side,
-          r.qty,
-          r.price_usd,
-          r.fx_at_trade,
-          r.commission,
-          r.ts,
-          externalId,
-        ],
-      );
-      if ((res.rowCount ?? 0) > 0) summary.imported++;
-      else summary.skipped++;
-    }
-    await client.query('COMMIT');
-  } catch (e) {
-    await client.query('ROLLBACK');
-    throw e;
-  } finally {
-    client.release();
-  }
+  // Build arrays for a single batch INSERT rather than one round-trip per row.
+  const symbols = valid.map((r) => r.symbol.toUpperCase());
+  const sides = valid.map((r) => r.side);
+  const qtys = valid.map((r) => r.qty);
+  const priceUsds = valid.map((r) => r.price_usd);
+  const fxAtTrades = valid.map((r) => r.fx_at_trade);
+  const commissions = valid.map((r) => r.commission);
+  const tss = valid.map((r) => r.ts);
+  const externalIds = valid.map(
+    (r) => r.external_id ?? `${platform}:${r.symbol}:${r.ts}:${r.qty}:${r.price_usd}`,
+  );
+
+  const res = await pool.query(
+    `INSERT INTO trades(platform, symbol, side, qty, price_usd, fx_at_trade, commission, ts, external_id, source)
+     SELECT $1, symbol, side, qty, price_usd, fx_at_trade, commission, ts, external_id, 'csv'
+     FROM unnest($2::text[], $3::text[], $4::numeric[], $5::numeric[], $6::numeric[], $7::numeric[], $8::bigint[], $9::text[])
+       AS t(symbol, side, qty, price_usd, fx_at_trade, commission, ts, external_id)
+     ON CONFLICT (platform, external_id) DO NOTHING`,
+    [platform, symbols, sides, qtys, priceUsds, fxAtTrades, commissions, tss, externalIds],
+  );
+  summary.imported = res.rowCount ?? 0;
+  summary.skipped = valid.length - summary.imported;
 
   return summary;
 }

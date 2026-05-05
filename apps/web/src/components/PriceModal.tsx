@@ -21,6 +21,7 @@ interface TradeRow {
   qty: number;
   price_usd: number;
   fx_at_trade: number;
+  commission: number | null;
   source: string | null;
 }
 
@@ -38,7 +39,9 @@ export function PriceModal({ position, currency, usdthb, onClose }: Props) {
   const [range, setRange] = useState<Range>('6M');
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [hoverTrade, setHoverTrade] = useState<TradeRow | null>(null);
-  const kind = position.platform === 'Binance' ? 'crypto' : 'stock';
+  // Only DIME holdings are listed equities; Binance + OnChain are crypto
+  // (Binance via spot pairs, OnChain via on-chain holdings priced from Binance).
+  const kind = position.platform === 'DIME' ? 'stock' : 'crypto';
 
   const { data } = useQuery({
     queryKey: ['symbol-history', position.symbol, kind, RANGE_DAYS[range]],
@@ -71,8 +74,23 @@ export function PriceModal({ position, currency, usdthb, onClose }: Props) {
   const last = prices[prices.length - 1] ?? 0;
   const change = last - first;
   const changePct = first > 0 ? (change / first) * 100 : 0;
+  // 1D delta: live last point vs prior daily close. symbols.ts overrides
+  // series[-1] with the live price, and carries forward across gaps so
+  // Mon compares to Fri close. prevPrice falls back to `last` when only
+  // one point exists (no delta to show).
+  const prevPrice = prices.length >= 2 ? prices[prices.length - 2] : last;
+  const dayChange = last - prevPrice;
+  const dayChangePct = prevPrice > 0 ? (dayChange / prevPrice) * 100 : 0;
   const min = prices.length ? Math.min(...prices) : 0;
   const max = prices.length ? Math.max(...prices) : 0;
+  const holdingUSD = position.qty * last;
+  const realizedUSD = data?.realizedUSD ?? 0;
+  const realizedTHB = data?.realizedTHB ?? 0;
+  const hasRealized = Math.abs(realizedUSD) >= 0.005;
+  const earned = data?.earned ?? { qty: 0, valueUSD: 0, valueTHB: 0, count: 0, firstTs: 0, lastTs: 0 };
+  const hasEarned = earned.count > 0;
+  const earnedNowUSD = earned.qty * last; // current mark-to-market value of accrued rewards
+  const earnedNowTHB = earnedNowUSD * usdthb;
 
   // Spot trades that fall inside the visible window. Earn/reward rows
   // are excluded so chart markers only represent buy/sell decisions.
@@ -173,6 +191,7 @@ export function PriceModal({ position, currency, usdthb, onClose }: Props) {
             {fmt(Math.abs(change)).replace(/^[−-]/, '')}
           </div>
           <div
+            title={`Change over the selected ${range} window`}
             style={{
               fontFamily: 'var(--mono)',
               fontSize: 12,
@@ -182,7 +201,7 @@ export function PriceModal({ position, currency, usdthb, onClose }: Props) {
               background: change >= 0 ? 'var(--up-bg)' : 'var(--down-bg)',
             }}
           >
-            {fmtPct(changePct)}
+            {range} {fmtPct(changePct)}
           </div>
           <div style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 'auto', fontFamily: 'var(--mono)' }}>
             {displayDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
@@ -232,7 +251,7 @@ export function PriceModal({ position, currency, usdthb, onClose }: Props) {
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(4, 1fr)',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))',
             gap: 12,
             padding: '14px 16px',
             background: 'var(--surface)',
@@ -242,12 +261,47 @@ export function PriceModal({ position, currency, usdthb, onClose }: Props) {
         >
           <Stat label="Period high" value={fmt(max)} />
           <Stat label="Period low" value={fmt(min)} />
-          <Stat label="Your avg" value={fmt(position.avgUSD)} muted />
           <Stat
-            label="Position PNL"
+            label="1D change"
+            value={`${dayChange >= 0 ? '+' : '−'}${fmt(Math.abs(dayChange))} (${fmtPct(dayChangePct)})`}
+            color={dayChange >= 0 ? 'var(--up)' : 'var(--down)'}
+          />
+          <Stat label="Your avg" value={fmt(position.avgUSD)} muted />
+          <Stat label="Holding value" value={fmt(holdingUSD)} />
+          <Stat
+            label="Unrealized PNL"
             value={currency === 'THB' ? fmtTHB(position.pnlTHB, { sign: true }) : fmtUSD(position.pnlUSD, { sign: true })}
             color={position.pnlPct >= 0 ? 'var(--up)' : 'var(--down)'}
+            tooltip="(price − weighted-avg cost) × held qty. Strict mark-to-market on shares you still hold."
           />
+          {hasRealized && (
+            <Stat
+              label="Realized PNL"
+              value={currency === 'THB' ? fmtTHB(realizedTHB, { sign: true }) : fmtUSD(realizedUSD, { sign: true })}
+              color={realizedUSD >= 0 ? 'var(--up)' : 'var(--down)'}
+              tooltip="Banked from past SELLs. Each SELL realizes (sell_price − then-avg) × sell_qty; avg per share is preserved."
+            />
+          )}
+          {hasRealized && (
+            <Stat
+              label="Net PNL"
+              value={
+                currency === 'THB'
+                  ? fmtTHB(position.pnlTHB + realizedTHB, { sign: true })
+                  : fmtUSD(position.pnlUSD + realizedUSD, { sign: true })
+              }
+              color={position.pnlUSD + realizedUSD >= 0 ? 'var(--up)' : 'var(--down)'}
+              tooltip="Unrealized + Realized = market − net cash invested. Same figure DIME shows as 'Unrealized P/L' (they don't separate realized)."
+            />
+          )}
+          {hasEarned && (
+            <Stat
+              label="Total earned"
+              value={`${earned.qty.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${position.symbol}`}
+              color="var(--up)"
+              tooltip={`${earned.count} Earn payouts · worth ${currency === 'THB' ? fmtTHB(earnedNowTHB) : fmtUSD(earnedNowUSD)} at today's price (${currency === 'THB' ? fmtTHB(earned.valueTHB) : fmtUSD(earned.valueUSD)} at receipt). Excluded from cost basis so PNL math stays clean.`}
+            />
+          )}
         </div>
 
         {allTrades.length > 0 && (
@@ -258,10 +312,13 @@ export function PriceModal({ position, currency, usdthb, onClose }: Props) {
   );
 }
 
-function Stat({ label, value, color, muted }: { label: string; value: string; color?: string; muted?: boolean }) {
+function Stat({ label, value, color, muted, tooltip }: { label: string; value: string; color?: string; muted?: boolean; tooltip?: string }) {
   return (
-    <div>
-      <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 4 }}>{label}</div>
+    <div title={tooltip}>
+      <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 4 }}>
+        {label}
+        {tooltip && <span style={{ marginLeft: 4, opacity: 0.6 }}>ⓘ</span>}
+      </div>
       <div style={{ fontFamily: 'var(--mono)', fontSize: 14, color: color ?? (muted ? 'var(--muted-2)' : 'var(--text)') }}>{value}</div>
     </div>
   );
@@ -520,7 +577,12 @@ function TradeList({ trades, currency, usdthb }: { trades: TradeRow[]; currency:
                 <td style={{ ...td, textAlign: 'right' }}>{t.qty}</td>
                 <td style={{ ...td, textAlign: 'right' }}>{fmt(t.price_usd)}</td>
                 <td style={{ ...td, textAlign: 'right', color: 'var(--muted)' }}>{t.fx_at_trade.toFixed(2)}</td>
-                <td style={{ ...td, textAlign: 'right' }}>{fmt(t.qty * t.price_usd)}</td>
+                <td style={{ ...td, textAlign: 'right' }}>
+                  {fmt(
+                    t.qty * t.price_usd +
+                      (t.side === 'SELL' ? -1 : 1) * (t.commission ?? 0),
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

@@ -23,3 +23,14 @@ secrets/
 .expo
 consolidate.dump
 pg16
+
+# Local agent / Claude Code config (per-machine)
+.claude/
+.agents/
+skills-lock.json
+
+# Local DB dumps + scratch images
+*.dump
+*.tar
+IMG_*.PNG
+IMG_*.JPG

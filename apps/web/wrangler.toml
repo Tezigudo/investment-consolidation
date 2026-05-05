@@ -1,0 +1,14 @@
+# Cloudflare Pages config for the static web build only.
+# Paired with the Pages dashboard settings:
+#   - Root directory: apps/web
+#   - Build command: cd ../.. && bun install && bun run --filter @consolidate/web build
+#   - Build output directory: dist
+#
+# Pinning `pages_build_output_dir` here keeps wrangler 4.x from running
+# its workspace-detection logic against the repo root (the failure you
+# saw: "Wrangler application detection logic has been run in the root
+# of a workspace").
+
+name = "consolidate-web"
+pages_build_output_dir = "dist"
+compatibility_date = "2025-12-01"

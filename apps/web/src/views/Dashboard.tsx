@@ -29,7 +29,8 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
   const { data: snap, isLoading, error } = usePortfolio();
   const { data: trades } = useTrades();
   const [selected, setSelected] = useState<EnrichedPosition | null>(null);
-  const [filter, setFilter] = useState<'All' | 'DIME' | 'Binance'>('All');
+  const [filter, setFilter] = useState<'All' | 'DIME' | 'Binance' | 'OnChain'>('All');
+  const [costView, setCostView] = useState<'standard' | 'dime'>('standard');
 
   const t = snap?.totals.all;
   // Synthesize a flat baseline series for the hero chart (true history
@@ -65,7 +66,7 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
   const usdthb = snap.fx.usdthb;
   const pnlCur = currency === 'THB' ? t.pnlTHB : t.pnlUSD;
 
-  const allPositions = [...snap.positions.dime, ...snap.positions.binance];
+  const allPositions = [...snap.positions.dime, ...snap.positions.binance, ...snap.positions.onchain];
   const sectorMap = new Map<string, number>();
   for (const p of allPositions) {
     const key = p.sector ?? 'Other';
@@ -79,8 +80,9 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
   }));
 
   const filtered: (EnrichedPosition & { key: string })[] = [];
-  if (filter !== 'Binance') snap.positions.dime.forEach((p) => filtered.push({ ...p, key: `DIME:${p.symbol}` }));
-  if (filter !== 'DIME') snap.positions.binance.forEach((p) => filtered.push({ ...p, key: `Binance:${p.symbol}` }));
+  if (filter === 'All' || filter === 'DIME') snap.positions.dime.forEach((p) => filtered.push({ ...p, key: `DIME:${p.symbol}` }));
+  if (filter === 'All' || filter === 'Binance') snap.positions.binance.forEach((p) => filtered.push({ ...p, key: `Binance:${p.symbol}` }));
+  if (filter === 'All' || filter === 'OnChain') snap.positions.onchain.forEach((p) => filtered.push({ ...p, key: `OnChain:${p.symbol}` }));
   filtered.sort((a, b) => b.marketUSD - a.marketUSD);
 
   const pnlOf = (p: EnrichedPosition) => (currency === 'THB' ? p.pnlTHB : p.pnlUSD);
@@ -222,8 +224,9 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
               {[
                 { key: 'dime', name: 'DIME', sub: 'US stocks', color: 'var(--accent)', tot: snap.totals.dime },
                 { key: 'binance', name: 'Binance', sub: 'Crypto', color: 'var(--accent-2)', tot: snap.totals.binance },
+                { key: 'onchain', name: 'On-chain', sub: 'World Chain', color: 'oklch(0.78 0.15 145)', tot: snap.totals.onchain },
                 { key: 'bank', name: 'Bank', sub: 'THB cash', color: 'var(--muted-2)', tot: snap.totals.bank },
-              ].map((p) => {
+              ].filter((p) => p.tot.marketUSD > 0).map((p) => {
                 const v = currency === 'THB' ? p.tot.marketTHB : p.tot.marketUSD;
                 const pct = snap.totals.all.marketUSD > 0 ? (p.tot.marketUSD / snap.totals.all.marketUSD) * 100 : 0;
                 const pnl = currency === 'THB' ? p.tot.pnlTHB : p.tot.pnlUSD;
@@ -278,15 +281,35 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
             <div>
               <div style={{ fontSize: 15, fontWeight: 600 }}>Holdings</div>
               <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
-                {snap.positions.dime.length + snap.positions.binance.length} positions across DIME & Binance
+                {snap.positions.dime.length + snap.positions.binance.length + snap.positions.onchain.length} positions across DIME, Binance{snap.positions.onchain.length > 0 ? ', On-chain' : ''}
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 6 }}>
-              {(['All', 'DIME', 'Binance'] as const).map((f) => (
-                <button key={f} className="pill" data-active={filter === f} onClick={() => setFilter(f)}>
-                  {f}
-                </button>
-              ))}
+            <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {(['standard', 'dime'] as const).map((v) => (
+                  <button
+                    key={v}
+                    className="pill"
+                    data-active={costView === v}
+                    onClick={() => setCostView(v)}
+                    title={
+                      v === 'standard'
+                        ? 'Avg cost = remaining cost basis ÷ qty (weighted average; preserved across sells).'
+                        : 'Avg cost = (total BUY cash − total SELL cash) ÷ qty held. Matches the "cost per share" the DIME app shows.'
+                    }
+                  >
+                    {v === 'standard' ? 'Standard' : 'DIME view'}
+                  </button>
+                ))}
+              </div>
+              <div style={{ width: 1, height: 18, background: 'var(--border)' }} />
+              <div style={{ display: 'flex', gap: 6 }}>
+                {(['All', 'DIME', 'Binance', 'OnChain'] as const).map((f) => (
+                  <button key={f} className="pill" data-active={filter === f} onClick={() => setFilter(f)}>
+                    {f === 'OnChain' ? 'On-chain' : f}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -301,7 +324,18 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
                   <th>Symbol</th>
                   <th>Platform</th>
                   <th style={{ textAlign: 'right' }}>Qty</th>
-                  <th style={{ textAlign: 'right' }}>Avg cost</th>
+                  <th style={{ textAlign: 'right' }}>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, justifyContent: 'flex-end' }}>
+                      Avg cost
+                      <InfoDot
+                        body={
+                          costView === 'standard'
+                            ? `Standard avg cost: take what you originally paid for the shares you still hold and divide by qty.\n\n• A SELL banks the gain or loss as "realized PNL" and removes the cost of just the sold shares — so the avg cost per remaining share doesn't change.\n• Result: this number tells you what each share you still hold cost you on the books.\n\nFormula: remaining cost basis ÷ qty held`
+                            : `DIME-style avg cost: take all the cash you've put in (BUY total) minus all the cash you've taken out (SELL total), divided by qty you still hold.\n\n• A profitable SELL makes this number go DOWN (you got more cash back than the per-share cost).\n• A loss-taking SELL makes this number go UP (you got less cash back, so your "net out-of-pocket per share" is now higher).\n\nThis matches the "Cost per Share" the DIME app shows.\n\nFormula: (BUY total cash − SELL total cash) ÷ qty held`
+                        }
+                      />
+                    </span>
+                  </th>
                   <th style={{ textAlign: 'right' }}>Price</th>
                   <th style={{ textAlign: 'right' }}>Market</th>
                   <th style={{ textAlign: 'right' }}>PNL ({currency})</th>
@@ -312,7 +346,21 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
               <tbody>
                 {filtered.map((p) => {
                   const v = currency === 'THB' ? p.marketTHB : p.marketUSD;
-                  const pnl = currency === 'THB' ? p.pnlTHB : p.pnlUSD;
+                  // DIME view: fold realized PNL back into PNL and back-out avg cost
+                  // from net cash invested per share. Standard view: weighted-average.
+                  const isDimeView = costView === 'dime';
+                  const realized = currency === 'THB' ? p.realizedTHB : p.realizedUSD;
+                  const pnl = (currency === 'THB' ? p.pnlTHB : p.pnlUSD) + (isDimeView ? realized : 0);
+                  const dimeCostUSD = p.qty > 0 ? p.costUSD - p.realizedUSD : 0;
+                  const dimeAvgUSD = p.qty > 0 ? dimeCostUSD / p.qty : p.avgUSD;
+                  const avgShown = isDimeView ? dimeAvgUSD : p.avgUSD;
+                  const pnlPctShown = isDimeView
+                    ? dimeCostUSD > 0
+                      ? (((currency === 'THB' ? p.pnlTHB + realized : p.pnlUSD + realized)) /
+                          (currency === 'THB' ? p.costTHB - p.realizedTHB : dimeCostUSD)) *
+                        100
+                      : 0
+                    : p.pnlPct;
                   return (
                     <tr key={p.key} className="row-clickable" onClick={() => setSelected(p)}>
                       <td>
@@ -328,7 +376,7 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
                       </td>
                       <td style={{ textAlign: 'right', fontFamily: 'var(--mono)' }}>{p.qty}</td>
                       <td style={{ textAlign: 'right', fontFamily: 'var(--mono)', color: 'var(--muted)' }}>
-                        {fmtUSD(p.avgUSD, { dp: p.avgUSD < 10 ? 3 : 2 })}
+                        {fmtUSD(avgShown, { dp: avgShown < 10 ? 3 : 2 })}
                       </td>
                       <td style={{ textAlign: 'right', fontFamily: 'var(--mono)' }}>
                         {fmtUSD(p.priceUSD, { dp: p.priceUSD < 10 ? 3 : 2 })}
@@ -339,8 +387,8 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
                       <td style={{ textAlign: 'right', fontFamily: 'var(--mono)', color: pnl >= 0 ? 'var(--up)' : 'var(--down)' }}>
                         {fmtMoney(pnl, currency, { sign: true, dp: currency === 'THB' ? 0 : 2 })}
                       </td>
-                      <td style={{ textAlign: 'right', fontFamily: 'var(--mono)', color: p.pnlPct >= 0 ? 'var(--up)' : 'var(--down)' }}>
-                        {fmtPct(p.pnlPct)}
+                      <td style={{ textAlign: 'right', fontFamily: 'var(--mono)', color: pnlPctShown >= 0 ? 'var(--up)' : 'var(--down)' }}>
+                        {fmtPct(pnlPctShown)}
                       </td>
                       <td style={{ textAlign: 'right', fontFamily: 'var(--mono)', color: 'var(--muted)' }}>
                         {p.fxLocked.toFixed(2)}
@@ -392,6 +440,71 @@ function WidgetHeader({ title, sub }: { title: string; sub?: string }) {
 function Empty({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
     <div style={{ padding: 20, textAlign: 'center', color: 'var(--muted)', fontSize: 12, ...style }}>{children}</div>
+  );
+}
+
+// Tiny ⓘ marker that opens a hover-popover with longer-form copy than a
+// native `title` tooltip can comfortably hold (multi-line, formatted).
+function InfoDot({ body }: { body: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span
+      style={{ position: 'relative', display: 'inline-flex' }}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onClick={(e) => {
+        e.stopPropagation();
+        setOpen((v) => !v);
+      }}
+    >
+      <span
+        style={{
+          width: 14,
+          height: 14,
+          borderRadius: '50%',
+          border: '1px solid var(--muted)',
+          color: 'var(--muted)',
+          fontSize: 9,
+          fontWeight: 700,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor: 'help',
+          fontFamily: 'serif',
+          fontStyle: 'italic',
+          lineHeight: 1,
+        }}
+      >
+        i
+      </span>
+      {open && (
+        <span
+          style={{
+            position: 'absolute',
+            top: '100%',
+            right: 0,
+            marginTop: 6,
+            zIndex: 50,
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: '10px 12px',
+            width: 320,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+            fontSize: 11,
+            lineHeight: 1.5,
+            color: 'var(--text)',
+            whiteSpace: 'pre-wrap',
+            textAlign: 'left',
+            fontWeight: 400,
+            letterSpacing: 0,
+            textTransform: 'none',
+          }}
+        >
+          {body}
+        </span>
+      )}
+    </span>
   );
 }
 

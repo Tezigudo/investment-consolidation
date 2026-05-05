@@ -23,6 +23,18 @@ const erc4626Abi = parseAbi([
   'function decimals() view returns (uint8)',
 ]);
 
+// Scale a raw bigint token amount to a JS number safely. WLD balances
+// are well under Number.MAX_SAFE_INTEGER (2^53-1 ≈ 9e15) when expressed
+// in whole tokens, so dividing a bigint by BigInt(scale) in integer
+// space before converting avoids precision/overflow issues with tokens
+// that have 18 decimals.
+function toTokenQty(raw: bigint, decimals: number): number {
+  const scale = BigInt(10 ** decimals);
+  const whole = raw / scale;
+  const frac = Number(raw % scale) / Number(scale);
+  return Number(whole) + frac;
+}
+
 // Balance breakdown so the cron log can show where WLD is sitting.
 export interface OnChainWLDSnapshot {
   totalQty: number;
@@ -46,7 +58,6 @@ export async function readWLDPosition(): Promise<OnChainWLDSnapshot> {
     abi: erc20Abi,
     functionName: 'decimals',
   })) as number;
-  const scale = 10 ** decimals;
 
   const walletRaw = (await client.readContract({
     address: wld,
@@ -54,7 +65,7 @@ export async function readWLDPosition(): Promise<OnChainWLDSnapshot> {
     functionName: 'balanceOf',
     args: [wallet],
   })) as bigint;
-  const walletQty = Number(walletRaw) / scale;
+  const walletQty = toTokenQty(walletRaw, decimals);
 
   const vaults: OnChainWLDSnapshot['vaults'] = [];
   for (const vaultAddrStr of config.ONCHAIN_WLD_VAULTS) {
@@ -91,7 +102,7 @@ export async function readWLDPosition(): Promise<OnChainWLDSnapshot> {
         functionName: 'convertToAssets',
         args: [shares],
       })) as bigint;
-      vaults.push({ address: vault, assetsQty: Number(assetsRaw) / scale, sharesRaw: shares });
+      vaults.push({ address: vault, assetsQty: toTokenQty(assetsRaw, decimals), sharesRaw: shares });
     } catch (e) {
       console.warn(`[onchain] vault ${vault} read failed:`, (e as Error).message);
     }
@@ -131,7 +142,7 @@ export async function refreshOnChainWLD(): Promise<OnChainWLDSnapshot> {
        cost_basis_thb = EXCLUDED.cost_basis_thb,
        sector = EXCLUDED.sector,
        updated_at = EXCLUDED.updated_at`,
-    [snap.totalQty, avgUSD, costTHB, Date.now()],
+    [snap.totalQty, avgUSD, costTHB, new Date()],
   );
 
   // One-shot cleanup: an early version of the chart wired OnChain →

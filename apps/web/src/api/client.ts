@@ -35,10 +35,52 @@ export interface DimeMailResult {
   debugDir: string;
 }
 
-const BASE = '/api';
+// Resolution order:
+//   1. localStorage override (Settings → Server URL) — lets user retarget
+//      a deployed web build at a different API without a redeploy.
+//   2. VITE_API_URL baked at build time (Cloudflare Pages env var).
+//   3. /api fallback — only meaningful in dev (Vite proxies to :4000).
+const ENV_BASE = (import.meta as { env?: Record<string, string | undefined> }).env
+  ?.VITE_API_URL;
+const TOKEN_KEY = 'consolidate.apiToken';
+const URL_KEY = 'consolidate.apiUrl';
+
+function readBase(): string {
+  if (typeof window !== 'undefined') {
+    const stored = localStorage.getItem(URL_KEY);
+    if (stored) return stored.replace(/\/$/, '');
+  }
+  if (ENV_BASE) return ENV_BASE.replace(/\/$/, '');
+  return '/api';
+}
+
+function readToken(): string {
+  if (typeof window === 'undefined') return '';
+  return localStorage.getItem(TOKEN_KEY) || '';
+}
+
+export function setApiUrl(url: string) {
+  const v = url.trim().replace(/\/$/, '');
+  if (v) localStorage.setItem(URL_KEY, v);
+  else localStorage.removeItem(URL_KEY);
+}
+export function setApiToken(token: string) {
+  const v = token.trim();
+  if (v) localStorage.setItem(TOKEN_KEY, v);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+export function getApiUrl(): string {
+  return readBase();
+}
+export function getApiToken(): string {
+  return readToken();
+}
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, init);
+  const token = readToken();
+  const headers = new Headers(init?.headers);
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const res = await fetch(`${readBase()}${path}`, { ...init, headers });
   if (!res.ok) throw new Error(`${path} ${res.status}: ${await res.text()}`);
   return res.json() as Promise<T>;
 }
@@ -62,16 +104,21 @@ export const api = {
       todayUSD: number;
       avgUSD: number;
       heldQty: number;
+      realizedUSD: number;
+      realizedTHB: number;
+      realizedFxContribTHB: number;
       series: { t: number; price: number }[];
-      trades: { id: number; ts: number; side: 'BUY' | 'SELL' | 'DIV'; qty: number; price_usd: number; fx_at_trade: number; source: string | null }[];
+      earned: { qty: number; valueUSD: number; valueTHB: number; count: number; firstTs: number; lastTs: number };
+      trades: { id: number; ts: number; side: 'BUY' | 'SELL' | 'DIV'; qty: number; price_usd: number; fx_at_trade: number; commission: number; source: string | null }[];
     }>(`/symbols/${encodeURIComponent(sym)}/history${s ? `?${s}` : ''}`);
   },
   importTradesCsv: async (file: File, platform: Platform): Promise<ImportSummary> => {
     const body = new FormData();
     body.append('file', file);
-    const res = await fetch(`${BASE}/import/trades-csv?platform=${platform}`, { method: 'POST', body });
-    if (!res.ok) throw new Error(`import ${res.status}: ${await res.text()}`);
-    return res.json() as Promise<ImportSummary>;
+    return req<ImportSummary>(`/import/trades-csv?platform=${platform}`, {
+      method: 'POST',
+      body,
+    });
   },
   binanceStatus: () => req<BinanceSyncStatus>('/import/binance/status'),
   binanceSync: () =>

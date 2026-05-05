@@ -29,7 +29,7 @@ const erc4626Abi = parseAbi([
 // space before converting avoids precision/overflow issues with tokens
 // that have 18 decimals.
 function toTokenQty(raw: bigint, decimals: number): number {
-  const scale = BigInt(10 ** decimals);
+  const scale = 10n ** BigInt(decimals); // avoid Number precision issues at 18 decimals
   const whole = raw / scale;
   const frac = Number(raw % scale) / Number(scale);
   return Number(whole) + frac;

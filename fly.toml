@@ -1,0 +1,48 @@
+# Fly.io config — API only. Singapore region for low latency to Thailand.
+# This file is committed; secrets (BINANCE_*, DATABASE_URL, API_AUTH_TOKEN,
+# DIME_PDF_PASSWORD, GMAIL_*) live in `fly secrets set` only.
+#
+# First-time bootstrap:
+#   flyctl launch --no-deploy --copy-config --name consolidate-api --region sin
+#   flyctl secrets set \
+#     DATABASE_URL='postgresql://…neon.tech/…?sslmode=require' \
+#     API_AUTH_TOKEN="$(openssl rand -hex 32)" \
+#     BINANCE_API_KEY=… BINANCE_API_SECRET=… \
+#     CORS_ORIGIN='https://consolidate.pages.dev'
+#   flyctl deploy
+
+app = "consolidate-api"
+primary_region = "sin"
+
+[build]
+  # Use the repo-root Dockerfile (multi-stage Bun build → Node runtime).
+  dockerfile = "Dockerfile"
+
+[env]
+  # Static config — all sensitive values go via `fly secrets`.
+  NODE_ENV = "production"
+  API_PORT = "4000"
+
+[http_service]
+  internal_port = 4000
+  force_https = true
+  # Don't auto-stop: cron jobs (price/FX/Binance/onchain refresh every
+  # 5min) need the machine running. Auto-start on incoming request as
+  # a safety net for the rare case where Fly's runner restarts.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  # shared-cpu-1x with 256MB is plenty for Fastify + a tiny pg pool.
+  # The whole snapshot fits in <5MB; the rest is cron state. Bumping
+  # to 512MB is cheap if you start adding more sources.
+  size = "shared-cpu-1x"
+  memory = "256mb"

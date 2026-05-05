@@ -14,7 +14,7 @@
 //   binance-import-mappers.ts     ← pure raw-row → schema mappers
 //   binance-stables.ts            ← shared STABLES set + QUOTE_CANDIDATES
 
-import { db } from '../db/client.js';
+import { pool } from '../db/client.js';
 import {
   walkMyTrades,
   walkDeposits,
@@ -59,33 +59,53 @@ async function discoverAssetUniverse(seed: Set<string>): Promise<Set<string>> {
     console.warn('[binance-import] balance discovery failed:', (e as Error).message);
   }
   // 2. Anything we've already recorded
-  const existing = db
-    .prepare("SELECT DISTINCT symbol FROM trades WHERE platform = 'Binance'")
-    .all() as { symbol: string }[];
+  const { rows: existing } = await pool.query<{ symbol: string }>(
+    "SELECT DISTINCT symbol FROM trades WHERE platform = 'Binance'",
+  );
   for (const r of existing) assets.add(r.symbol);
   return assets;
 }
 
 // ──────────────────────────────────────────────────────────────
-// DB writers — all go through INSERT OR IGNORE on UNIQUE(platform, external_id)
-// so reruns (and overlapping windows) are safe.
+// DB writers — all go through ON CONFLICT DO NOTHING on UNIQUE
+// (platform, external_id) so reruns (and overlapping windows) are safe.
 // ──────────────────────────────────────────────────────────────
 
-const insertTrade = db.prepare(
-  `INSERT INTO trades(platform, symbol, side, qty, price_usd, fx_at_trade, commission, ts, external_id, source)
-   VALUES (@platform, @symbol, @side, @qty, @price_usd, @fx_at_trade, @commission, @ts, @external_id, @source)
-   ON CONFLICT(platform, external_id) DO NOTHING`,
-);
+async function writeTrade(t: TradeInsert): Promise<boolean> {
+  const res = await pool.query(
+    `INSERT INTO trades(platform, symbol, side, qty, price_usd, fx_at_trade, commission, ts, external_id, source)
+     VALUES ('Binance', $1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT (platform, external_id) DO NOTHING`,
+    [
+      t.symbol,
+      t.side,
+      t.qty,
+      t.price_usd,
+      t.fx_at_trade,
+      t.commission,
+      t.ts,
+      t.external_id ?? null,
+      t.source ?? null,
+    ],
+  );
+  return (res.rowCount ?? 0) > 0;
+}
 
-const insertDeposit = db.prepare(
-  `INSERT INTO deposits(platform, amount_thb, amount_usd, fx_locked, ts, note, source)
-   VALUES (@platform, @amount_thb, @amount_usd, @fx_locked, @ts, @note, @source)
-   ON CONFLICT(platform, source) DO NOTHING`,
-);
-
-function writeTrade(t: TradeInsert): boolean {
-  const info = insertTrade.run({ platform: 'Binance', ...t });
-  return info.changes > 0;
+async function writeBinanceDeposit(d: {
+  amount_thb: number;
+  amount_usd: number;
+  fx_locked: number;
+  ts: number;
+  note: string | null;
+  source: string;
+}): Promise<boolean> {
+  const res = await pool.query(
+    `INSERT INTO deposits(platform, amount_thb, amount_usd, fx_locked, ts, note, source)
+     VALUES ('Binance', $1, $2, $3, $4, $5, $6)
+     ON CONFLICT (platform, source) DO NOTHING`,
+    [d.amount_thb, d.amount_usd, d.fx_locked, d.ts, d.note, d.source],
+  );
+  return (res.rowCount ?? 0) > 0;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -105,14 +125,14 @@ async function importMyTradesForSymbol(symbol: string, counts: Counts): Promise<
   const parsed = parseSymbolBaseQuote(symbol);
   if (!parsed) return;
   const cursorKey = `myTrades:${symbol}`;
-  const cursor = readCursor(cursorKey);
+  const cursor = await readCursor(cursorKey);
   const startFromId = cursor.last_id ? cursor.last_id + 1 : 0;
   let lastId = cursor.last_id ?? 0;
 
   try {
     for await (const t of walkMyTrades(symbol, startFromId)) {
       const mapped = await mapSpotTrade(t, parsed.base, parsed.quote);
-      if (mapped && writeTrade(mapped)) counts.trades++;
+      if (mapped && (await writeTrade(mapped))) counts.trades++;
       if (t.id > lastId) lastId = t.id;
     }
   } catch (e) {
@@ -131,7 +151,7 @@ async function importMyTradesForSymbol(symbol: string, counts: Counts): Promise<
   // Persist cursor even when no trades were found (last_id stays 0).
   // This marks the symbol as "probed" so subsequent incremental runs
   // can skip it instead of burning another signed request.
-  writeCursor(cursorKey, { last_id: lastId });
+  await writeCursor(cursorKey, { last_id: lastId });
 }
 
 async function importConverts(
@@ -141,7 +161,7 @@ async function importConverts(
   seenAssets: Set<string>,
 ): Promise<void> {
   const cursorKey = 'convert';
-  const cursor = readCursor(cursorKey);
+  const cursor = await readCursor(cursorKey);
   const effectiveStart = Math.max(startMs, (cursor.last_ts ?? 0) + 1);
   if (effectiveStart >= endMs) return;
   let lastTs = cursor.last_ts ?? 0;
@@ -150,10 +170,10 @@ async function importConverts(
     seenAssets.add(c.fromAsset);
     seenAssets.add(c.toAsset);
     const rows = await mapConvert(c);
-    for (const r of rows) if (writeTrade(r)) counts.trades++;
+    for (const r of rows) if (await writeTrade(r)) counts.trades++;
     if (c.createTime > lastTs) lastTs = c.createTime;
   }
-  if (lastTs > (cursor.last_ts ?? 0)) writeCursor(cursorKey, { last_ts: lastTs });
+  if (lastTs > (cursor.last_ts ?? 0)) await writeCursor(cursorKey, { last_ts: lastTs });
 }
 
 async function importEarnRewards(startMs: number, endMs: number, counts: Counts): Promise<void> {
@@ -164,7 +184,7 @@ async function importEarnRewards(startMs: number, endMs: number, counts: Counts)
   ];
 
   for (const [key, gen] of endpoints) {
-    const cursor = readCursor(key);
+    const cursor = await readCursor(key);
     const baseline = cursor.last_ts ?? 0;
     let lastTs = baseline;
     try {
@@ -187,7 +207,7 @@ async function importEarnRewards(startMs: number, endMs: number, counts: Counts)
           continue;
         }
         const fx = await getUSDTHBForTs(ts);
-        const ok = writeTrade({
+        const ok = await writeTrade({
           symbol: r.asset,
           side: 'BUY',
           qty: amount,
@@ -205,7 +225,7 @@ async function importEarnRewards(startMs: number, endMs: number, counts: Counts)
       console.warn(`[binance-import] ${key}:`, (e as Error).message);
       counts.errors++;
     }
-    if (lastTs > baseline) writeCursor(key, { last_ts: lastTs });
+    if (lastTs > baseline) await writeCursor(key, { last_ts: lastTs });
   }
 }
 
@@ -216,7 +236,7 @@ async function importDeposits(
   seenAssets: Set<string>,
 ): Promise<void> {
   const cursorKey = 'deposits';
-  const cursor = readCursor(cursorKey);
+  const cursor = await readCursor(cursorKey);
   const effectiveStart = Math.max(startMs, (cursor.last_ts ?? 0) + 1);
   if (effectiveStart >= endMs) return;
   let lastTs = cursor.last_ts ?? 0;
@@ -241,8 +261,7 @@ async function importDeposits(
       note = `crypto-in ${amount} ${d.coin} @ ${fxLocked.toFixed(4)} THB/USD`;
     }
 
-    const info = insertDeposit.run({
-      platform: 'Binance',
+    const inserted = await writeBinanceDeposit({
       amount_thb: amountThb,
       amount_usd: amountUsd,
       fx_locked: fxLocked,
@@ -250,10 +269,10 @@ async function importDeposits(
       note,
       source: `api-deposit:${d.id ?? d.txId ?? `${d.coin}:${d.insertTime}:${amount}`}`,
     });
-    if (info.changes > 0) counts.deposits++;
+    if (inserted) counts.deposits++;
     if (d.insertTime > lastTs) lastTs = d.insertTime;
   }
-  if (lastTs > (cursor.last_ts ?? 0)) writeCursor(cursorKey, { last_ts: lastTs });
+  if (lastTs > (cursor.last_ts ?? 0)) await writeCursor(cursorKey, { last_ts: lastTs });
 }
 
 async function importWithdrawals(
@@ -263,7 +282,7 @@ async function importWithdrawals(
   seenAssets: Set<string>,
 ): Promise<void> {
   const cursorKey = 'withdrawals';
-  const cursor = readCursor(cursorKey);
+  const cursor = await readCursor(cursorKey);
   const effectiveStart = Math.max(startMs, (cursor.last_ts ?? 0) + 1);
   if (effectiveStart >= endMs) return;
   let lastTs = cursor.last_ts ?? 0;
@@ -276,7 +295,7 @@ async function importWithdrawals(
     counts.withdrawals++;
     if (w.ts > lastTs) lastTs = w.ts;
   }
-  if (lastTs > (cursor.last_ts ?? 0)) writeCursor(cursorKey, { last_ts: lastTs });
+  if (lastTs > (cursor.last_ts ?? 0)) await writeCursor(cursorKey, { last_ts: lastTs });
 }
 
 // P2P import intentionally omitted — user opted out of P2P history ingestion.
@@ -290,7 +309,7 @@ async function importFiatOrdersAndPayments(
 ): Promise<void> {
   // Fiat orders = THB bank/card in/out to Binance (fiat ledger only).
   // These seed the deposits ledger the same way a bank transfer would.
-  const fiatCursor = readCursor('fiat-orders');
+  const fiatCursor = await readCursor('fiat-orders');
   const fiatStart = Math.max(startMs, (fiatCursor.last_ts ?? 0) + 1);
   let fiatLast = fiatCursor.last_ts ?? 0;
   if (fiatStart < endMs) {
@@ -299,8 +318,7 @@ async function importFiatOrdersAndPayments(
         if (o.fiatCurrency !== 'THB') continue;
         const amount = Number(o.amount);
         if (!(amount > 0)) continue;
-        const info = insertDeposit.run({
-          platform: 'Binance',
+        const inserted = await writeBinanceDeposit({
           amount_thb: txType === 0 ? amount : -amount,
           amount_usd: 0,
           fx_locked: 0,
@@ -308,15 +326,15 @@ async function importFiatOrdersAndPayments(
           note: `fiat ${txType === 0 ? 'in' : 'out'} ${amount} THB`,
           source: `api-fiat-order:${o.orderNo}`,
         });
-        if (info.changes > 0) counts.deposits++;
+        if (inserted) counts.deposits++;
         if (o.createTime > fiatLast) fiatLast = o.createTime;
       }
     }
-    if (fiatLast > (fiatCursor.last_ts ?? 0)) writeCursor('fiat-orders', { last_ts: fiatLast });
+    if (fiatLast > (fiatCursor.last_ts ?? 0)) await writeCursor('fiat-orders', { last_ts: fiatLast });
   }
 
   // Fiat payments = "buy crypto with card/bank" — see mapFiatPayment.
-  const payCursor = readCursor('fiat-payments');
+  const payCursor = await readCursor('fiat-payments');
   const payStart = Math.max(startMs, (payCursor.last_ts ?? 0) + 1);
   let payLast = payCursor.last_ts ?? 0;
   if (payStart < endMs) {
@@ -326,16 +344,23 @@ async function importFiatOrdersAndPayments(
         const out = await mapFiatPayment(p);
         if (out) {
           if (out.kind === 'deposit') {
-            const info = insertDeposit.run(out.row);
-            if (info.changes > 0) counts.deposits++;
+            const inserted = await writeBinanceDeposit({
+              amount_thb: out.row.amount_thb,
+              amount_usd: out.row.amount_usd,
+              fx_locked: out.row.fx_locked,
+              ts: out.row.ts,
+              note: out.row.note,
+              source: out.row.source,
+            });
+            if (inserted) counts.deposits++;
           } else if (out.kind === 'trade') {
-            if (writeTrade(out.row)) counts.trades++;
+            if (await writeTrade(out.row)) counts.trades++;
           }
         }
         if (p.createTime > payLast) payLast = p.createTime;
       }
     }
-    if (payLast > (payCursor.last_ts ?? 0)) writeCursor('fiat-payments', { last_ts: payLast });
+    if (payLast > (payCursor.last_ts ?? 0)) await writeCursor('fiat-payments', { last_ts: payLast });
   }
 }
 
@@ -411,13 +436,14 @@ export async function importBinanceHistory(opts: ImportOptions = {}): Promise<Im
   // Skip symbols that have been probed before and had no trades
   // (cursor exists with last_id = 0). Only re-probe symbols that
   // either have never been checked or have a real trade cursor.
-  const toProbe = symbols.filter((sym) => {
-    const cursor = readCursor(`myTrades:${sym}`);
+  const toProbe: string[] = [];
+  for (const sym of symbols) {
+    const cursor = await readCursor(`myTrades:${sym}`);
     // null = never probed → must check.
     // last_id > 0 = has trades → check for new ones.
     // last_id = 0 + exists in DB = probed but empty → skip.
-    return cursor.last_id === null || cursor.last_id > 0;
-  });
+    if (cursor.last_id === null || cursor.last_id > 0) toProbe.push(sym);
+  }
   progress(
     'myTrades',
     `probing ${toProbe.length} pairs (${symbols.length - toProbe.length} cached-empty skipped, ${allCandidates.length} total candidates)`,

@@ -12,7 +12,9 @@
     "test": "vitest run",
     "import:dime": "tsx src/cli/import-dime.ts",
     "import:dime-mail": "tsx src/cli/import-dime-mail.ts",
-    "import:binance": "tsx src/cli/import-binance.ts"
+    "import:binance": "tsx src/cli/import-binance.ts",
+    "migrate:pg": "tsx scripts/pg-migrate.ts",
+    "migrate:port-sqlite": "tsx scripts/migrate-sqlite-to-pg.ts"
   },
   "dependencies": {
     "@consolidate/shared": "*",
@@ -25,6 +27,8 @@
     "node-cron": "^3.0.3",
     "papaparse": "^5.4.1",
     "pdfjs-dist": "^5.6.205",
+    "pg": "^8.13.1",
+    "viem": "^2.48.8",
     "zod": "^3.23.8"
   },
   "devDependencies": {
@@ -32,6 +36,7 @@
     "@types/node": "^22.5.0",
     "@types/node-cron": "^3.0.11",
     "@types/papaparse": "^5.3.14",
+    "@types/pg": "^8.11.10",
     "tsx": "^4.19.0",
     "typescript": "^5.5.4",
     "vitest": "^2.0.5"

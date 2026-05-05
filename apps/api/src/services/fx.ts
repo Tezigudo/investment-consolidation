@@ -1,4 +1,4 @@
-import { db } from '../db/client.js';
+import { pool } from '../db/client.js';
 import type { FxRow } from '../db/types.js';
 
 const FX_TTL_MS = 60 * 60 * 1000; // 1h — FX moves slowly and we don't want to hammer free endpoints
@@ -35,20 +35,26 @@ async function fetchUSDTHB(): Promise<{ rate: number; source: string }> {
   }
 }
 
-export function getCachedFx(pair: string): FxRow | undefined {
-  return db.prepare('SELECT * FROM fx_rates WHERE pair = ?').get(pair) as FxRow | undefined;
+export async function getCachedFx(pair: string): Promise<FxRow | undefined> {
+  const { rows } = await pool.query<FxRow>(
+    'SELECT pair, rate, source, ts FROM fx_rates WHERE pair = $1',
+    [pair],
+  );
+  return rows[0];
 }
 
 export async function getUSDTHB(forceRefresh = false): Promise<FxRow> {
-  const cached = getCachedFx('USDTHB');
+  const cached = await getCachedFx('USDTHB');
   if (!forceRefresh && cached && Date.now() - cached.ts < FX_TTL_MS) return cached;
 
   try {
     const { rate, source } = await fetchUSDTHB();
     const row: FxRow = { pair: 'USDTHB', rate, source, ts: Date.now() };
-    db.prepare(
-      'INSERT INTO fx_rates(pair, rate, source, ts) VALUES (?, ?, ?, ?) ON CONFLICT(pair) DO UPDATE SET rate = excluded.rate, source = excluded.source, ts = excluded.ts',
-    ).run(row.pair, row.rate, row.source, row.ts);
+    await pool.query(
+      `INSERT INTO fx_rates(pair, rate, source, ts) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (pair) DO UPDATE SET rate = EXCLUDED.rate, source = EXCLUDED.source, ts = EXCLUDED.ts`,
+      [row.pair, row.rate, row.source, row.ts],
+    );
     return row;
   } catch (err) {
     if (cached) return cached; // stale is better than nothing

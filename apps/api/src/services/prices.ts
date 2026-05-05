@@ -1,4 +1,4 @@
-import { db } from '../db/client.js';
+import { pool } from '../db/client.js';
 import { config } from '../config.js';
 import { fetchPricesUSDT } from './binance.js';
 import type { PriceRow } from '../db/types.js';
@@ -40,14 +40,20 @@ export async function fetchStockPrice(symbol: string): Promise<{ price: number; 
   }
 }
 
-export function getCachedPrice(symbol: string): PriceRow | undefined {
-  return db.prepare('SELECT * FROM prices WHERE symbol = ?').get(symbol) as PriceRow | undefined;
+export async function getCachedPrice(symbol: string): Promise<PriceRow | undefined> {
+  const { rows } = await pool.query<PriceRow>(
+    'SELECT symbol, price_usd, source, ts FROM prices WHERE symbol = $1',
+    [symbol],
+  );
+  return rows[0];
 }
 
-function writePrice(symbol: string, price: number, source: Source) {
-  db.prepare(
-    'INSERT INTO prices(symbol, price_usd, source, ts) VALUES (?, ?, ?, ?) ON CONFLICT(symbol) DO UPDATE SET price_usd = excluded.price_usd, source = excluded.source, ts = excluded.ts',
-  ).run(symbol, price, source, Date.now());
+async function writePrice(symbol: string, price: number, source: Source): Promise<void> {
+  await pool.query(
+    `INSERT INTO prices(symbol, price_usd, source, ts) VALUES ($1, $2, $3, $4)
+     ON CONFLICT (symbol) DO UPDATE SET price_usd = EXCLUDED.price_usd, source = EXCLUDED.source, ts = EXCLUDED.ts`,
+    [symbol, price, source, Date.now()],
+  );
 }
 
 export async function refreshPrices(opts: { stocks: string[]; crypto: string[] }) {
@@ -55,7 +61,7 @@ export async function refreshPrices(opts: { stocks: string[]; crypto: string[] }
   for (const sym of opts.stocks) {
     try {
       const { price, source } = await fetchStockPrice(sym);
-      writePrice(sym, price, source);
+      await writePrice(sym, price, source);
     } catch (e) {
       console.warn(`[prices] ${sym} failed:`, (e as Error).message);
     }
@@ -64,7 +70,7 @@ export async function refreshPrices(opts: { stocks: string[]; crypto: string[] }
   if (opts.crypto.length) {
     try {
       const prices = await fetchPricesUSDT(opts.crypto);
-      for (const [asset, price] of Object.entries(prices)) writePrice(asset, price, 'binance');
+      for (const [asset, price] of Object.entries(prices)) await writePrice(asset, price, 'binance');
     } catch (e) {
       console.warn('[prices] crypto batch failed:', (e as Error).message);
     }
@@ -73,18 +79,18 @@ export async function refreshPrices(opts: { stocks: string[]; crypto: string[] }
 
 // Used by aggregator: price for a single symbol, using cache if fresh.
 export async function getPrice(symbol: string, kind: 'stock' | 'crypto'): Promise<number> {
-  const cached = getCachedPrice(symbol);
+  const cached = await getCachedPrice(symbol);
   if (cached && Date.now() - cached.ts < PRICE_TTL_MS) return cached.price_usd;
 
   try {
     if (kind === 'stock') {
       const { price, source } = await fetchStockPrice(symbol);
-      writePrice(symbol, price, source);
+      await writePrice(symbol, price, source);
       return price;
     }
     const prices = await fetchPricesUSDT([symbol]);
     const price = prices[symbol];
-    if (price) writePrice(symbol, price, 'binance');
+    if (price) await writePrice(symbol, price, 'binance');
     return price ?? cached?.price_usd ?? 0;
   } catch {
     return cached?.price_usd ?? 0;

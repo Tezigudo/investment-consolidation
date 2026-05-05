@@ -1,8 +1,8 @@
-import { db } from '../db/client.js';
+import { pool } from '../db/client.js';
 
 // Historical USDTHB source. Yahoo Finance `THB=X` chart endpoint gives
 // daily closes for the whole range in a single call — we bulk-fetch
-// once at backfill time and serve all subsequent lookups from SQLite.
+// once at backfill time and serve all subsequent lookups from the DB.
 //
 // FX on weekends/holidays: we carry the last observed business-day
 // close forward ("last available rate"), which is how most brokerage
@@ -62,14 +62,25 @@ export async function backfillUSDTHB(startDate: string, endDate?: string): Promi
     throw new Error(`bad date range: ${startDate} .. ${endDate ?? 'now'}`);
   }
   const rows = await fetchYahooDailyRange(startMs, endMs);
-  const insert = db.prepare(
-    `INSERT INTO fx_daily(pair, date, rate, source) VALUES ('USDTHB', ?, ?, 'yahoo')
-     ON CONFLICT(pair, date) DO UPDATE SET rate = excluded.rate, source = excluded.source`,
-  );
-  const tx = db.transaction((batch: { date: string; rate: number }[]) => {
-    for (const r of batch) insert.run(r.date, r.rate);
-  });
-  tx(rows);
+  if (!rows.length) return 0;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const r of rows) {
+      await client.query(
+        `INSERT INTO fx_daily(pair, date, rate, source) VALUES ('USDTHB', $1, $2, 'yahoo')
+         ON CONFLICT (pair, date) DO UPDATE SET rate = EXCLUDED.rate, source = EXCLUDED.source`,
+        [r.date, r.rate],
+      );
+    }
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
   return rows.length;
 }
 
@@ -79,31 +90,28 @@ export async function backfillUSDTHB(startDate: string, endDate?: string): Promi
 // a last resort triggers a small backfill window around ts.
 export async function getUSDTHBForTs(ts: number): Promise<number> {
   const date = dateKey(ts);
-  const row = db
-    .prepare(
-      `SELECT rate FROM fx_daily WHERE pair = 'USDTHB' AND date <= ? ORDER BY date DESC LIMIT 1`,
-    )
-    .get(date) as { rate: number } | undefined;
-  if (row) return row.rate;
+  const prior = await pool.query<{ rate: number }>(
+    `SELECT rate FROM fx_daily WHERE pair = 'USDTHB' AND date <= $1 ORDER BY date DESC LIMIT 1`,
+    [date],
+  );
+  if (prior.rows[0]) return prior.rows[0].rate;
 
-  const later = db
-    .prepare(
-      `SELECT rate FROM fx_daily WHERE pair = 'USDTHB' AND date >= ? ORDER BY date ASC LIMIT 1`,
-    )
-    .get(date) as { rate: number } | undefined;
-  if (later) return later.rate;
+  const later = await pool.query<{ rate: number }>(
+    `SELECT rate FROM fx_daily WHERE pair = 'USDTHB' AND date >= $1 ORDER BY date ASC LIMIT 1`,
+    [date],
+  );
+  if (later.rows[0]) return later.rows[0].rate;
 
   // Cold cache: fetch a 30-day window centred on ts.
   const window = 30 * 86_400_000;
   const startDate = dateKey(ts - window);
   const endDate = dateKey(ts + window);
   await backfillUSDTHB(startDate, endDate);
-  const retry = db
-    .prepare(
-      `SELECT rate FROM fx_daily WHERE pair = 'USDTHB' AND date <= ? ORDER BY date DESC LIMIT 1`,
-    )
-    .get(date) as { rate: number } | undefined;
-  if (retry) return retry.rate;
+  const retry = await pool.query<{ rate: number }>(
+    `SELECT rate FROM fx_daily WHERE pair = 'USDTHB' AND date <= $1 ORDER BY date DESC LIMIT 1`,
+    [date],
+  );
+  if (retry.rows[0]) return retry.rows[0].rate;
   throw new Error(`no USDTHB rate found for ${date}`);
 }
 

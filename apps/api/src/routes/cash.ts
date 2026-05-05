@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { db } from '../db/client.js';
+import { pool } from '../db/client.js';
 import { getUSDTHB } from '../services/fx.js';
 
 const UpsertBody = z.object({
@@ -10,7 +10,10 @@ const UpsertBody = z.object({
 });
 
 export async function cashRoutes(app: FastifyInstance) {
-  app.get('/cash', async () => db.prepare('SELECT * FROM cash').all());
+  app.get('/cash', async () => {
+    const { rows } = await pool.query('SELECT * FROM cash');
+    return rows;
+  });
 
   app.put('/cash', async (req, reply) => {
     const parsed = UpsertBody.safeParse(req.body);
@@ -21,15 +24,16 @@ export async function cashRoutes(app: FastifyInstance) {
     const fx = await getUSDTHB();
     const { platform, label, amount_thb } = parsed.data;
     const amount_usd = amount_thb / fx.rate;
-    db.prepare(
+    await pool.query(
       `INSERT INTO cash(platform, label, amount_thb, amount_usd, updated_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(platform) DO UPDATE SET
-         label = excluded.label,
-         amount_thb = excluded.amount_thb,
-         amount_usd = excluded.amount_usd,
-         updated_at = excluded.updated_at`,
-    ).run(platform, label, amount_thb, amount_usd, Date.now());
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (platform) DO UPDATE SET
+         label = EXCLUDED.label,
+         amount_thb = EXCLUDED.amount_thb,
+         amount_usd = EXCLUDED.amount_usd,
+         updated_at = EXCLUDED.updated_at`,
+      [platform, label, amount_thb, amount_usd, Date.now()],
+    );
     return { ok: true };
   });
 }

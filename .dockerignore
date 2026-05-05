@@ -5,6 +5,7 @@ apps/web/dist
 apps/api/dist
 apps/api/data
 apps/mobile
+!apps/mobile/package.json
 secrets
 *.dump
 *.tar

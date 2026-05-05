@@ -11,7 +11,7 @@
 #     CORS_ORIGIN='https://consolidate.pages.dev'
 #   flyctl deploy
 
-app = "consolidate-api"
+app = "investment-consolidation"
 primary_region = "sin"
 
 [build]
@@ -41,8 +41,8 @@ primary_region = "sin"
     path = "/health"
 
 [[vm]]
-  # shared-cpu-1x with 256MB is plenty for Fastify + a tiny pg pool.
-  # The whole snapshot fits in <5MB; the rest is cron state. Bumping
-  # to 512MB is cheap if you start adding more sources.
+  # 512MB needed because the boot warmup fires Binance + price + on-chain
+  # crons in quick succession — 256MB OOM-kills the node process during
+  # the first sweep. Steady-state usage is ~150MB.
   size = "shared-cpu-1x"
-  memory = "256mb"
+  memory = "512mb"

@@ -6,7 +6,7 @@
 # `node dist/server.js` — keeps behavior identical to local.
 
 # ── Stage 1: install + typecheck + tsc -> dist ──────────────────────
-FROM oven/bun:1.2-alpine AS build
+FROM oven/bun:1.2.21-alpine AS build
 WORKDIR /app
 
 # Copy workspace manifests first so the layer cache survives source edits.
@@ -14,6 +14,7 @@ COPY package.json bun.lock ./
 COPY apps/api/package.json apps/api/
 COPY packages/shared/package.json packages/shared/
 COPY apps/web/package.json apps/web/
+COPY apps/mobile/package.json apps/mobile/
 
 # Install all workspaces (web is needed because it's referenced by the
 # root, but we won't ship its build artifact). Mobile is gitignored so
@@ -30,7 +31,7 @@ COPY apps/api apps/api
 RUN bun run --filter @consolidate/api build
 
 # ── Stage 2: lean Node runtime ──────────────────────────────────────
-FROM node:20-alpine AS runtime
+FROM node:24.15.0-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 

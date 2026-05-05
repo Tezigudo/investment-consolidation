@@ -93,6 +93,7 @@ button { font-family: inherit; }
 }
 .plat-tag[data-plat="DIME"]    { color: var(--accent);   background: color-mix(in oklab, var(--accent) 12%, transparent); }
 .plat-tag[data-plat="Binance"] { color: var(--accent-2); background: color-mix(in oklab, var(--accent-2) 14%, transparent); }
+.plat-tag[data-plat="OnChain"] { color: oklch(0.78 0.15 145); background: color-mix(in oklab, oklch(0.78 0.15 145) 14%, transparent); }
 
 .tweaks-panel {
   position: fixed;

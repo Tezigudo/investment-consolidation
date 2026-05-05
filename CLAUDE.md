@@ -14,9 +14,10 @@ wrong; don't break it.
 
 ## Layout (bun workspaces)
 
-- `apps/api/` — Fastify + TypeScript + better-sqlite3. Migrations, Binance HMAC client, CSV importer, portfolio aggregator, cron jobs, CLI.
+- `apps/api/` — Fastify + TypeScript + Postgres (`pg`). Migrations, Binance HMAC client, CSV importer, portfolio aggregator, cron jobs, CLI. (Legacy `better-sqlite3` dep is still present but unused — Postgres is the source of truth.)
 - `apps/web/` — Vite + React 18 + TypeScript + TanStack Query. One desktop-grid dashboard.
-- `packages/shared/` — cross-workspace types (`PortfolioSnapshot`, `EnrichedPosition`, `TradeRow`, `Currency`, …). **Contract between api and web — keep both sides importing from here, never duplicate the shapes.**
+- `apps/mobile/` — Expo SDK 54 + React Native 0.81 + Expo Router + TanStack Query. iOS-first local-use app for the same data, talks to the API over LAN/Tailscale.
+- `packages/shared/` — cross-workspace types (`PortfolioSnapshot`, `EnrichedPosition`, `TradeRow`, `Currency`, …). **Contract between api, web, AND mobile — keep all three sides importing from here, never duplicate the shapes.** Must stay ESM-clean (no Node built-ins) so Metro bundles it cleanly.
 - `design/` — original Claude Design HTML/JSX prototype, kept for visual reference only. Do not import from it.
 
 ## Commands
@@ -26,27 +27,33 @@ bun install
 bun run dev             # concurrent api (:4000) + web (:5173)
 bun run dev:api         # api only
 bun run dev:web         # web only
-bun run typecheck       # both workspaces in parallel
-bun run build           # typecheck + vite build
+bun run dev:mobile      # Expo on LAN; phone scans QR via Camera → Expo Go
+bun run dev:mobile:tunnel  # Expo via tunnel (use off-LAN; slower)
+bun run typecheck       # all three workspaces in parallel
+bun run build           # typecheck + vite build (mobile is not part of build)
 bun run --filter @consolidate/api test            # vitest
 bun run --filter @consolidate/api test -- cost-basis  # single test file
 bun run import:dime -- path/to/dime-export.csv
 ```
 
-Bun is the package manager and workspace task runner. The **API itself still runs under Node** (`tsx watch` for dev, `node dist/server.js` for start) because `better-sqlite3`'s prebuilt N-API binary segfaults under Bun's runtime as of 1.2.x. Don't "simplify" the api's `dev`/`start` to `bun --watch` / `bun dist/...` without first swapping to `bun:sqlite` (which would mean a rewrite of `db/client.ts` and `db/migrations.ts`). The web side runs fine under Bun.
+Bun is the package manager and workspace task runner. The API runs under Node via `tsx watch` for dev / `node dist/server.js` for start.
 
 The web dev server proxies `/api/*` → `http://127.0.0.1:4000` (see `apps/web/vite.config.ts`). The frontend always calls `/api/...` — never hard-code `localhost:4000` into components.
 
+The API binds to `0.0.0.0` (not `127.0.0.1`) so the mobile client on a real iPhone can reach it. Don't change this back unless mobile is gone.
+
+Mobile-specific scripts must `cd apps/mobile && bun run …` rather than `bun run --filter`; the workspace filter wraps stdout and swallows the Expo QR ASCII output.
+
 ## Hot-path discipline (important)
 
-`GET /portfolio` must read **only from SQLite** (`positions`, `prices`, `fx_rates`, `cash`, `trades` tables). The frontend polls this endpoint every 30s via TanStack Query — making it hit Binance/Finnhub/Yahoo on every request will rate-limit you fast.
+`GET /portfolio` must read **only from Postgres** (`positions`, `prices`, `fx_rates`, `cash`, `trades` tables). Both the web dashboard AND the mobile app poll this endpoint every 30s via TanStack Query — making it hit Binance/Finnhub/Yahoo on every request will rate-limit you fast.
 
 Live outbound calls live in:
 
-- `src/jobs/scheduler.ts` — cron: prices every 5min, Binance holdings every 5min, FX every hour, plus a one-shot warm-up on server boot.
+- `src/jobs/scheduler.ts` — cron: prices every 5min, Binance holdings every 5min, FX every hour, on-chain WLD every 5min, plus a one-shot warm-up on server boot.
 - `buildSnapshot({ refresh: true })` — triggered only by `GET /portfolio?refresh=1` (manual "refresh now" escape hatch).
 
-When adding a new data source, put the fetch in a cron job that writes to SQLite, and add a read-from-DB code path in `src/services/portfolio.ts`. Don't add fetches to request handlers.
+When adding a new data source, put the fetch in a cron job that writes to Postgres, and add a read-from-DB code path in `src/services/portfolio.ts`. Don't add fetches to request handlers.
 
 ## True-baht PNL math (don't break this)
 
@@ -79,13 +86,30 @@ Pricing is served by `/api/v3/ticker/price` in a single batched call (array form
 
 ## Env loading
 
-`apps/api/src/config.ts` loads `.env` from the **repo root** (not `apps/api/.env`). Vite does the same via `envDir: root` in its config. Only add env vars to one place — the root `.env`.
+`apps/api/src/config.ts` loads `.env` from the **repo root** (not `apps/api/.env`). Vite does the same via `envDir: root` in its config. Add **API/web** env vars to the root `.env`.
+
+The mobile app is an exception — Expo loads `apps/mobile/.env.local` separately. Only `EXPO_PUBLIC_*` vars are exposed to the bundle. The one that matters is `EXPO_PUBLIC_API_URL` (the LAN/Tailscale URL of the Mac running the API). The user can also override it at runtime via Settings → Server.
 
 ## Database
 
-`apps/api/data/consolidate.sqlite` (gitignored). Migrations run on `import { db } from './db/client.js'`. Add new migrations as appended entries in `MIGRATIONS` in `src/db/migrations.ts` with a monotonically increasing `version`; never edit applied migrations in place.
+Postgres runs via `docker-compose.yml` (service `db`, port 5432, db/user/password all `consolidate`). Connection string in `DATABASE_URL`. Migrations run on first import of `./db/client.js`; add new ones as appended entries in `apps/api/src/db/pg-migrations.ts` with a monotonically increasing `version` — never edit applied migrations in place.
 
 Tables carry intent: `deposits.fx_locked`, `trades.fx_at_trade`, and `positions.cost_basis_thb` are the FX-locked columns. If you add a new source of trades, make sure it writes an FX rate per row or the whole PNL model fails silently.
+
+## Mobile app (apps/mobile)
+
+Expo SDK 54 + Expo Router + RN 0.81. Local-use only — no App Store, no auth beyond Face ID at app open.
+
+Key constraints:
+
+- **Networking is LAN-direct.** No Vite-style proxy; the API base URL is the full Mac LAN/Tailscale URL. Set in `apps/mobile/.env.local` or via Settings → Server. Phone must reach the Mac on port 4000.
+- **Metro is monorepo-aware.** `metro.config.js` adds the workspace root to `watchFolders` and walks `nodeModulesPaths` upward; don't simplify it.
+- **`@consolidate/shared` must stay ESM-clean** (no Node built-ins) — Metro will choke otherwise.
+- **Charts are hand-rolled SVG** in `src/components/PriceChart.tsx`. We avoided `victory-native` to keep the dep tree slim. If you need pinch-zoom or crosshair tooltips later, swap to victory-native CartesianChart with the Skia backend.
+- **`pnlPctTHB` from `EnrichedPosition` is unsafe to display directly.** After partial sells, `costTHB` shrinks proportionally and the % explodes (e.g. 3,000% on a position that's been mostly sold). Use `safePctDisplay(pnl, base)` from `src/lib/format.ts` with `base = costTHB - realizedUSD * fxLocked` (≈ original net cash invested) — it clamps to ±999% and returns null when meaningless (zero cost basis, fully closed positions).
+- **Price `kind` mapping** in `src/lib/kind.ts`: `DIME → stock`, everything else (Binance, OnChain) → `crypto`. Same logic the web's PriceModal uses. Don't infer it from the symbol.
+- **FlashList v2** removed `estimatedItemSize` — don't add it back.
+- **Don't run mobile via `bun run --filter`.** The workspace runner buffers stdout and eats the Expo QR. The root scripts cd into `apps/mobile` directly.
 
 ## Design prototype
 
@@ -188,3 +212,23 @@ When memory_search returns a fact marked ⚠ STALE:
 2. If changed → update via memory_write
 3. NEVER act on STALE facts without verification
 
+## Process Management (Windows)
+- NEVER use `taskkill //F //IM node.exe` — kills ALL Node.js INCLUDING Claude Code CLI!
+- Use: `npx kill-port PORT` or find PID via `netstat -ano | findstr :PORT` then `taskkill //F //PID XXXX`
+
+## Git Rules
+- Commit often, small atomic changes. Format: "[type] what and why"
+- commit = Tier 1 (do it yourself). push = Tier 3 (verify_identity).
+
+## Project DNA: investing-consolidate
+Stack: unknown
+Style: [unknown]
+Structure: apps, design, packages, secrets
+Deploy: [NOT SET]
+Active: [new session]
+Last: [first session]
+
+## Session Continuity
+Files: apps/mobile/src/lib/kind.ts, apps/mobile/src/lib/format.ts, apps/mobile/src/theme/tokens.ts, apps/mobile/.gitignore, apps/mobile/expo-env.d.ts
+
+# === END COGNILAYER ===

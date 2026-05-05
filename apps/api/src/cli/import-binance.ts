@@ -28,7 +28,7 @@ for (let i = 0; i < argv.length; i++) {
 if (!forceLabel) {
   // Default: incremental — cursors in binance_sync_state handle the
   // start point automatically. Show the last sync time for context.
-  const lastTs = getLastBinanceSyncTs();
+  const lastTs = await getLastBinanceSyncTs();
   if (lastTs) {
     const ago = Math.round((Date.now() - lastTs) / 1000);
     const when = new Date(lastTs).toISOString().replace('T', ' ').slice(0, 19);

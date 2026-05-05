@@ -20,3 +20,6 @@ apps/api/data/
 .idea/
 
 secrets/
+.expo
+consolidate.dump
+pg16

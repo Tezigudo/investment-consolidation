@@ -1,4 +1,4 @@
-import { db } from '../db/client.js';
+import { pool } from '../db/client.js';
 import { fetchKlinePriceAt } from './binance.js';
 import { dateKey } from './fx-history.js';
 import { isStable } from './binance-stables.js';
@@ -12,10 +12,11 @@ export async function getPriceUSDTForTs(asset: string, ts: number): Promise<numb
   if (isStable(asset)) return 1;
   const date = dateKey(ts);
 
-  const cached = db
-    .prepare(`SELECT price_usd FROM prices_daily WHERE asset = ? AND date = ?`)
-    .get(asset, date) as { price_usd: number } | undefined;
-  if (cached) return cached.price_usd;
+  const { rows } = await pool.query<{ price_usd: number }>(
+    `SELECT price_usd FROM prices_daily WHERE asset = $1 AND date = $2`,
+    [asset, date],
+  );
+  if (rows[0]) return rows[0].price_usd;
 
   let price = await fetchKlinePriceAt(asset, ts, 'USDT');
   if (price == null) {
@@ -25,10 +26,11 @@ export async function getPriceUSDTForTs(asset: string, ts: number): Promise<numb
   }
   if (price == null) return null;
 
-  db.prepare(
+  await pool.query(
     `INSERT INTO prices_daily(asset, date, price_usd, source)
-     VALUES (?, ?, ?, 'binance-klines')
-     ON CONFLICT(asset, date) DO UPDATE SET price_usd = excluded.price_usd, source = excluded.source`,
-  ).run(asset, date, price);
+     VALUES ($1, $2, $3, 'binance-klines')
+     ON CONFLICT (asset, date) DO UPDATE SET price_usd = EXCLUDED.price_usd, source = EXCLUDED.source`,
+    [asset, date, price],
+  );
   return price;
 }

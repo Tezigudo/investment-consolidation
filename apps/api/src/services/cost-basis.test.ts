@@ -113,6 +113,22 @@ describe('aggregateTrades — realized PNL', () => {
     expect(r.realizedFxContribTHB).toBeCloseTo(0, 6);          // FX unchanged
   });
 
+  it('commission folds into cost on BUY and reduces proceeds on SELL', () => {
+    // BUY 10 @ 100 fee 5 (FX 35) → costUSD = 1000+5 = 1005, costTHB = 1005×35 = 35175
+    // SELL 4 @ 120 fee 2 (FX 36): sellFrac=0.4 → costShareUSD=402, costShareTHB=14070
+    //   proceedsUSD = 4×120 − 2 = 478, proceedsTHB = 478×36 = 17208
+    //   realizedUSD = 478 − 402 = 76; realizedTHB = 17208 − 14070 = 3138
+    const r = aggregateTrades([
+      trade({ side: 'BUY', qty: 10, price_usd: 100, fx_at_trade: 35, commission: 5 }),
+      trade({ side: 'SELL', qty: 4, price_usd: 120, fx_at_trade: 36, commission: 2 }),
+    ]);
+    expect(r.qty).toBe(6);
+    expect(r.avgUSD).toBeCloseTo(100.5, 6);                       // 1005 / 10 unchanged on partial sell
+    expect(r.costTHB).toBeCloseTo(35175 * 0.6, 6);                // 21105
+    expect(r.realizedUSD).toBeCloseTo(76, 6);
+    expect(r.realizedTHB).toBeCloseTo(3138, 6);
+  });
+
   it('multi-buy then partial sell uses weighted avg cost', () => {
     // BUY 10 @ 100 FX35 + BUY 10 @ 200 FX36 → qty=20, costUSD=3000, costTHB=107000
     // SELL 5 @ 180 FX37: sellFrac=0.25 → costShareUSD=750, costShareTHB=26750,

@@ -1,6 +1,6 @@
-import { db } from '../db/client.js';
+import { pool } from '../db/client.js';
 import { fetchBinancePositions } from './binance.js';
-import { refreshPrices, getCachedPrice } from './prices.js';
+import { refreshPrices, getCachedPrices } from './prices.js';
 import { getUSDTHB } from './fx.js';
 import { aggregateTrades } from './cost-basis.js';
 import type { PositionRow, TradeRow } from '../db/types.js';
@@ -20,10 +20,11 @@ export type { EnrichedPosition, Totals, PortfolioSnapshot };
 // without hammering Binance.
 // ─────────────────────────────────────────────────────────────
 
-function tradesBySymbol(platform: Platform): Map<string, TradeRow[]> {
-  const rows = db
-    .prepare('SELECT * FROM trades WHERE platform = ? ORDER BY ts ASC')
-    .all(platform) as TradeRow[];
+async function tradesBySymbol(platform: Platform): Promise<Map<string, TradeRow[]>> {
+  const { rows } = await pool.query<TradeRow>(
+    'SELECT * FROM trades WHERE platform = $1 ORDER BY ts ASC',
+    [platform],
+  );
   const map = new Map<string, TradeRow[]>();
   for (const r of rows) {
     const arr = map.get(r.symbol) ?? [];
@@ -62,6 +63,8 @@ function enrich(row: {
   costTHB: number;
   marketFX: number;
   meta?: { name?: string; sector?: string } | null;
+  realizedUSD?: number;
+  realizedTHB?: number;
 }): EnrichedPosition {
   const { qty, avgUSD, priceUSD, costTHB, marketFX } = row;
   const marketUSD = qty * priceUSD;
@@ -91,6 +94,8 @@ function enrich(row: {
     pnlTHB,
     pnlPctTHB,
     fxContribTHB,
+    realizedUSD: row.realizedUSD ?? 0,
+    realizedTHB: row.realizedTHB ?? 0,
   };
 }
 
@@ -161,33 +166,25 @@ function realizedAcrossSymbols(tradeMap: Map<string, TradeRow[]>): RealizedTotal
   return { realizedUSD, realizedTHB, realizedFxContribTHB };
 }
 
-function upsertPosition(p: EnrichedPosition) {
-  db.prepare(
+async function upsertPosition(p: EnrichedPosition): Promise<void> {
+  await pool.query(
     `INSERT INTO positions(platform, symbol, name, qty, avg_cost_usd, cost_basis_thb, sector, updated_at)
-     VALUES (@platform, @symbol, @name, @qty, @avgUSD, @costTHB, @sector, @ts)
-     ON CONFLICT(platform, symbol) DO UPDATE SET
-       name = excluded.name,
-       qty = excluded.qty,
-       avg_cost_usd = excluded.avg_cost_usd,
-       cost_basis_thb = excluded.cost_basis_thb,
-       sector = excluded.sector,
-       updated_at = excluded.updated_at`,
-  ).run({
-    platform: p.platform,
-    symbol: p.symbol,
-    name: p.name,
-    qty: p.qty,
-    avgUSD: p.avgUSD,
-    costTHB: p.costTHB,
-    sector: p.sector,
-    ts: Date.now(),
-  });
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (platform, symbol) DO UPDATE SET
+       name = EXCLUDED.name,
+       qty = EXCLUDED.qty,
+       avg_cost_usd = EXCLUDED.avg_cost_usd,
+       cost_basis_thb = EXCLUDED.cost_basis_thb,
+       sector = EXCLUDED.sector,
+       updated_at = EXCLUDED.updated_at`,
+    [p.platform, p.symbol, p.name, p.qty, p.avgUSD, p.costTHB, p.sector, Date.now()],
+  );
 }
 
 // Expensive — calls Binance. Only from cron / explicit refresh.
 export async function refreshBinance(marketFX: number): Promise<EnrichedPosition[]> {
   const live = await fetchBinancePositions();
-  const tradeMap = tradesBySymbol('Binance');
+  const tradeMap = await tradesBySymbol('Binance');
   const out: EnrichedPosition[] = [];
   for (const pos of live) {
     if (pos.qty <= 0 || pos.priceUSD <= 0) continue;
@@ -206,8 +203,10 @@ export async function refreshBinance(marketFX: number): Promise<EnrichedPosition
       costTHB,
       marketFX,
       meta,
+      realizedUSD: agg.realizedUSD,
+      realizedTHB: agg.realizedTHB,
     });
-    upsertPosition(enriched);
+    await upsertPosition(enriched);
     out.push(enriched);
   }
   return out;
@@ -252,19 +251,29 @@ function buildDimeCashRow(
     pnlTHB: 0,
     pnlPctTHB: 0,
     fxContribTHB: 0,
+    realizedUSD: 0,
+    realizedTHB: 0,
   };
 }
 
 // Recompute DIME positions from trades. Cheap (DB-only) so safe on hot path.
-function readDimePositions(
+async function readDimePositions(
   marketFX: number,
-): { positions: EnrichedPosition[]; tradeMap: Map<string, TradeRow[]> } {
-  const tradeMap = tradesBySymbol('DIME');
+): Promise<{ positions: EnrichedPosition[]; tradeMap: Map<string, TradeRow[]> }> {
+  const tradeMap = await tradesBySymbol('DIME');
+
+  // Aggregate all symbols first so we know which are active, then batch
+  // fetch their prices in one query instead of one query per symbol.
+  const aggs = new Map<string, ReturnType<typeof aggregateTrades>>();
+  for (const [symbol, trades] of tradeMap) aggs.set(symbol, aggregateTrades(trades));
+  const activeSymbols = [...aggs.entries()].filter(([, a]) => a.qty > 0).map(([s]) => s);
+  const priceMap = await getCachedPrices(activeSymbols);
+
   const out: EnrichedPosition[] = [];
-  for (const [symbol, trades] of tradeMap) {
-    const agg = aggregateTrades(trades);
+  for (const [symbol] of tradeMap) {
+    const agg = aggs.get(symbol)!
     if (agg.qty <= 0) continue;
-    const cached = getCachedPrice(symbol);
+    const cached = priceMap.get(symbol);
     const priceUSD = cached?.price_usd ?? agg.avgUSD;
     const meta = STOCK_META[symbol];
     const enriched = enrich({
@@ -276,8 +285,10 @@ function readDimePositions(
       costTHB: agg.costTHB,
       marketFX,
       meta,
+      realizedUSD: agg.realizedUSD,
+      realizedTHB: agg.realizedTHB,
     });
-    upsertPosition(enriched);
+    await upsertPosition(enriched);
     out.push(enriched);
   }
   const cash = buildDimeCashRow(tradeMap, marketFX);
@@ -285,32 +296,73 @@ function readDimePositions(
   return { positions: out, tradeMap };
 }
 
-function readBinancePositionsFromDb(marketFX: number): EnrichedPosition[] {
-  const rows = db
-    .prepare("SELECT * FROM positions WHERE platform = 'Binance'")
-    .all() as PositionRow[];
-  return rows.map((p) => {
-    const priceUSD = getCachedPrice(p.symbol)?.price_usd ?? p.avg_cost_usd;
-    return enrich({
-      platform: 'Binance',
-      symbol: p.symbol,
-      qty: p.qty,
-      avgUSD: p.avg_cost_usd,
-      priceUSD,
-      costTHB: p.cost_basis_thb,
-      marketFX,
-      meta: CRYPTO_META[p.symbol],
-    });
-  });
+// Read on-chain positions written by the cron (refreshOnChainWLD). No
+// trades exist for on-chain rows — cost basis lives in the positions
+// table directly (set from ONCHAIN_WLD_COST_USD env). Realized PNL is
+// always 0 since we don't model on-chain SELLs (yet).
+async function readOnChainPositionsFromDb(marketFX: number): Promise<EnrichedPosition[]> {
+  const { rows } = await pool.query<PositionRow>(
+    "SELECT * FROM positions WHERE platform = 'OnChain'",
+  );
+  const priceMap = await getCachedPrices(rows.map((p) => p.symbol));
+  const out: EnrichedPosition[] = [];
+  for (const p of rows) {
+    const cached = priceMap.get(p.symbol);
+    const priceUSD = cached?.price_usd ?? p.avg_cost_usd;
+    out.push(
+      enrich({
+        platform: 'OnChain',
+        symbol: p.symbol,
+        qty: p.qty,
+        avgUSD: p.avg_cost_usd,
+        priceUSD,
+        costTHB: p.cost_basis_thb,
+        marketFX,
+        meta: { name: p.name ?? undefined, sector: p.sector ?? undefined },
+      }),
+    );
+  }
+  return out;
 }
 
-export function buildBankPositions(): EnrichedPosition[] {
-  const rows = db.prepare('SELECT * FROM cash').all() as {
+async function readBinancePositionsFromDb(
+  marketFX: number,
+  tradeMap: Map<string, TradeRow[]>,
+): Promise<EnrichedPosition[]> {
+  const { rows } = await pool.query<PositionRow>(
+    "SELECT * FROM positions WHERE platform = 'Binance'",
+  );
+  const priceMap = await getCachedPrices(rows.map((p) => p.symbol));
+  const out: EnrichedPosition[] = [];
+  for (const p of rows) {
+    const cached = priceMap.get(p.symbol);
+    const priceUSD = cached?.price_usd ?? p.avg_cost_usd;
+    const agg = aggregateTrades(tradeMap.get(p.symbol) ?? []);
+    out.push(
+      enrich({
+        platform: 'Binance',
+        symbol: p.symbol,
+        qty: p.qty,
+        avgUSD: p.avg_cost_usd,
+        priceUSD,
+        costTHB: p.cost_basis_thb,
+        marketFX,
+        meta: CRYPTO_META[p.symbol],
+        realizedUSD: agg.realizedUSD,
+        realizedTHB: agg.realizedTHB,
+      }),
+    );
+  }
+  return out;
+}
+
+export async function buildBankPositions(): Promise<EnrichedPosition[]> {
+  const { rows } = await pool.query<{
     platform: Platform;
     label: string;
     amount_thb: number;
     amount_usd: number;
-  }[];
+  }>('SELECT platform, label, amount_thb, amount_usd FROM cash');
   return rows.map((r) => ({
     platform: 'Bank',
     symbol: r.platform,
@@ -329,6 +381,8 @@ export function buildBankPositions(): EnrichedPosition[] {
     pnlTHB: 0,
     pnlPctTHB: 0,
     fxContribTHB: 0,
+    realizedUSD: 0,
+    realizedTHB: 0,
   }));
 }
 
@@ -337,12 +391,12 @@ export async function buildSnapshot(opts: { refresh?: boolean } = {}): Promise<P
 
   if (opts.refresh) {
     try {
-      const dimeSymbols = db
-        .prepare("SELECT DISTINCT symbol FROM trades WHERE platform = 'DIME'")
-        .all() as { symbol: string }[];
-      const binanceSymbols = db
-        .prepare("SELECT DISTINCT symbol FROM trades WHERE platform = 'Binance'")
-        .all() as { symbol: string }[];
+      const { rows: dimeSymbols } = await pool.query<{ symbol: string }>(
+        "SELECT DISTINCT symbol FROM trades WHERE platform = 'DIME'",
+      );
+      const { rows: binanceSymbols } = await pool.query<{ symbol: string }>(
+        "SELECT DISTINCT symbol FROM trades WHERE platform = 'Binance'",
+      );
       await refreshPrices({
         stocks: dimeSymbols.map((r) => r.symbol),
         crypto: binanceSymbols.map((r) => r.symbol),
@@ -355,25 +409,28 @@ export async function buildSnapshot(opts: { refresh?: boolean } = {}): Promise<P
     }
   }
 
-  const dimeRes = readDimePositions(fx.rate);
+  const dimeRes = await readDimePositions(fx.rate);
   const dime = dimeRes.positions;
-  const binance = readBinancePositionsFromDb(fx.rate);
-  const bank = buildBankPositions();
+  const binanceTrades = await tradesBySymbol('Binance');
+  const binance = await readBinancePositionsFromDb(fx.rate, binanceTrades);
+  const bank = await buildBankPositions();
+  const onchain = await readOnChainPositionsFromDb(fx.rate);
 
   const dimeRealized = realizedAcrossSymbols(dimeRes.tradeMap);
-  const binanceRealized = realizedAcrossSymbols(tradesBySymbol('Binance'));
+  const binanceRealized = realizedAcrossSymbols(binanceTrades);
   const allRealized = sumRealized(dimeRealized, binanceRealized);
 
   const totals = {
     dime: sumTotals(dime, dimeRealized),
     binance: sumTotals(binance, binanceRealized),
     bank: sumTotals(bank),
-    all: sumTotals([...dime, ...binance, ...bank], allRealized),
+    onchain: sumTotals(onchain),
+    all: sumTotals([...dime, ...binance, ...bank, ...onchain], allRealized),
   };
 
   return {
     fx: { usdthb: fx.rate, ts: fx.ts },
-    positions: { dime, binance, bank },
+    positions: { dime, binance, bank, onchain },
     totals,
     asOf: Date.now(),
   };

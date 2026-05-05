@@ -1,6 +1,6 @@
 import Papa from 'papaparse';
 import { z } from 'zod';
-import { db } from '../db/client.js';
+import { pool } from '../db/client.js';
 import type { TradeSide, Platform } from '../db/types.js';
 
 // DIME doesn't publish a canonical CSV schema. The importer accepts several
@@ -103,7 +103,10 @@ export interface ImportSummary {
   errors: { row: number; error: string }[];
 }
 
-export function importTradesCsv(csvText: string, platform: Platform = 'DIME'): ImportSummary {
+export async function importTradesCsv(
+  csvText: string,
+  platform: Platform = 'DIME',
+): Promise<ImportSummary> {
   const parsed = Papa.parse<Record<string, unknown>>(csvText, {
     header: true,
     skipEmptyLines: true,
@@ -118,30 +121,6 @@ export function importTradesCsv(csvText: string, platform: Platform = 'DIME'): I
     errors: [],
   };
 
-  const insert = db.prepare(
-    `INSERT INTO trades(platform, symbol, side, qty, price_usd, fx_at_trade, commission, ts, external_id, source)
-     VALUES (@platform, @symbol, @side, @qty, @price_usd, @fx_at_trade, @commission, @ts, @external_id, 'csv')
-     ON CONFLICT(platform, external_id) DO NOTHING`,
-  );
-
-  const tx = db.transaction((rows: z.infer<typeof Row>[]) => {
-    for (const r of rows) {
-      const info = insert.run({
-        platform,
-        symbol: r.symbol.toUpperCase(),
-        side: r.side,
-        qty: r.qty,
-        price_usd: r.price_usd,
-        fx_at_trade: r.fx_at_trade,
-        commission: r.commission,
-        ts: r.ts,
-        external_id: r.external_id ?? `${platform}:${r.symbol}:${r.ts}:${r.qty}:${r.price_usd}`,
-      });
-      if (info.changes > 0) summary.imported++;
-      else summary.skipped++;
-    }
-  });
-
   const valid: z.infer<typeof Row>[] = [];
   parsed.data.forEach((raw, i) => {
     try {
@@ -151,6 +130,30 @@ export function importTradesCsv(csvText: string, platform: Platform = 'DIME'): I
     }
   });
 
-  tx(valid);
+  if (!valid.length) return summary;
+
+  // Build arrays for a single batch INSERT rather than one round-trip per row.
+  const symbols = valid.map((r) => r.symbol.toUpperCase());
+  const sides = valid.map((r) => r.side);
+  const qtys = valid.map((r) => r.qty);
+  const priceUsds = valid.map((r) => r.price_usd);
+  const fxAtTrades = valid.map((r) => r.fx_at_trade);
+  const commissions = valid.map((r) => r.commission);
+  const tss = valid.map((r) => r.ts);
+  const externalIds = valid.map(
+    (r) => r.external_id ?? `${platform}:${r.symbol}:${r.ts}:${r.qty}:${r.price_usd}`,
+  );
+
+  const res = await pool.query(
+    `INSERT INTO trades(platform, symbol, side, qty, price_usd, fx_at_trade, commission, ts, external_id, source)
+     SELECT $1, symbol, side, qty, price_usd, fx_at_trade, commission, ts, external_id, 'csv'
+     FROM unnest($2::text[], $3::text[], $4::numeric[], $5::numeric[], $6::numeric[], $7::numeric[], $8::bigint[], $9::text[])
+       AS t(symbol, side, qty, price_usd, fx_at_trade, commission, ts, external_id)
+     ON CONFLICT (platform, external_id) DO NOTHING`,
+    [platform, symbols, sides, qtys, priceUsds, fxAtTrades, commissions, tss, externalIds],
+  );
+  summary.imported = res.rowCount ?? 0;
+  summary.skipped = valid.length - summary.imported;
+
   return summary;
 }

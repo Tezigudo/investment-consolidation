@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { db } from '../db/client.js';
+import { pool } from '../db/client.js';
 import { getPrice } from '../services/prices.js';
 import { binancePublicGet } from './../services/binance-http.js';
 import { dateKey } from '../services/fx-history.js';
+import { aggregateTrades } from '../services/cost-basis.js';
 import type { TradeRow } from '../db/types.js';
 
 // Real daily price history. Reads from `prices_daily` cache first, then
@@ -14,29 +15,83 @@ import type { TradeRow } from '../db/types.js';
 
 const ONE_DAY = 86_400_000;
 
+// After a daily backfill attempt (success OR failure), don't try again
+// for this long. Protects against modal-open spam hammering Yahoo and
+// triggering 429s on symbols whose history just isn't available.
+const FETCH_COOLDOWN_MS = 60 * 1000;
+
 function todayDayStart(): number {
   return Math.floor(Date.now() / ONE_DAY) * ONE_DAY;
 }
 
-function readDailyCache(asset: string, fromDay: number, toDay: number): Map<string, number> {
-  const rows = db
-    .prepare(`SELECT date, price_usd FROM prices_daily WHERE asset = ? AND date >= ? AND date <= ?`)
-    .all(asset, dateKey(fromDay), dateKey(toDay)) as { date: string; price_usd: number }[];
+async function readFetchedAt(asset: string): Promise<number> {
+  const { rows } = await pool.query<{ last_fetched_at: string | number }>(
+    'SELECT last_fetched_at FROM prices_daily_fetch WHERE asset = $1',
+    [asset],
+  );
+  return rows[0] ? Number(rows[0].last_fetched_at) : 0;
+}
+
+async function markFetched(asset: string): Promise<void> {
+  await pool.query(
+    `INSERT INTO prices_daily_fetch(asset, last_fetched_at) VALUES ($1, $2)
+     ON CONFLICT (asset) DO UPDATE SET last_fetched_at = EXCLUDED.last_fetched_at`,
+    [asset, Date.now()],
+  );
+}
+
+// Coalesce concurrent backfills for the same symbol+window. Two modal
+// opens within the same second share one upstream call instead of
+// racing two identical fetches into a 429.
+const inflight = new Map<string, Promise<{ day: number; price: number }[]>>();
+
+function fetchDailyOnce(
+  asset: string,
+  kind: 'stock' | 'crypto',
+  fromDay: number,
+  toDay: number,
+  days: number,
+): Promise<{ day: number; price: number }[]> {
+  const key = `${kind}:${asset}:${days}`;
+  const existing = inflight.get(key);
+  if (existing) return existing;
+  const p = (kind === 'crypto'
+    ? fetchCryptoDaily(asset, fromDay, toDay)
+    : fetchStockDaily(asset, days)
+  ).finally(() => inflight.delete(key));
+  inflight.set(key, p);
+  return p;
+}
+
+async function readDailyCache(
+  asset: string,
+  fromDay: number,
+  toDay: number,
+): Promise<Map<string, number>> {
+  const { rows } = await pool.query<{ date: string; price_usd: number }>(
+    `SELECT date, price_usd FROM prices_daily WHERE asset = $1 AND date >= $2 AND date <= $3`,
+    [asset, dateKey(fromDay), dateKey(toDay)],
+  );
   const out = new Map<string, number>();
   for (const r of rows) out.set(r.date, r.price_usd);
   return out;
 }
 
-function writeDailyCache(asset: string, source: string, points: { day: number; price: number }[]) {
-  const stmt = db.prepare(
+async function writeDailyCache(
+  asset: string,
+  source: string,
+  points: { day: number; price: number }[],
+): Promise<void> {
+  if (!points.length) return;
+  const dates = points.map((p) => dateKey(p.day));
+  const prices = points.map((p) => p.price);
+  await pool.query(
     `INSERT INTO prices_daily(asset, date, price_usd, source)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(asset, date) DO UPDATE SET price_usd = excluded.price_usd, source = excluded.source`,
+     SELECT $1, date, price_usd, $4
+     FROM unnest($2::text[], $3::numeric[]) AS t(date, price_usd)
+     ON CONFLICT (asset, date) DO UPDATE SET price_usd = EXCLUDED.price_usd, source = EXCLUDED.source`,
+    [asset, dates, prices, source],
   );
-  const tx = db.transaction((rows: { day: number; price: number }[]) => {
-    for (const r of rows) stmt.run(asset, dateKey(r.day), r.price, source);
-  });
-  tx(points);
 }
 
 async function fetchCryptoDaily(asset: string, fromDay: number, toDay: number): Promise<{ day: number; price: number }[]> {
@@ -96,13 +151,14 @@ async function buildSeries(
   const fromDay = today - (days - 1) * ONE_DAY;
 
   // 1. Read cache.
-  const cache = readDailyCache(symbol, fromDay, today);
+  const cache = await readDailyCache(symbol, fromDay, today);
 
   // 2. Decide whether to refetch.
   //   a) cold cache (<30% of window populated) → backfill the whole window.
-  //   b) warm cache but the freshest entry is more than STALE_DAYS old →
-  //      refetch (otherwise the chart goes flat between latest cached day
-  //      and today, with only today's point patched by the live overlay).
+  //   b) warm cache but the freshest entry is more than STALE_DAYS old
+  //      relative to *yesterday* → refetch (today is overlaid by
+  //      getPrice(), so today missing from prices_daily is normal and
+  //      must not, by itself, trigger a fetch).
   // Stocks legitimately have weekend/holiday gaps, so we allow up to 3
   // missing days at the tail before refetching.
   const STALE_DAYS = 3;
@@ -111,18 +167,28 @@ async function buildSeries(
     const d = Date.parse(k);
     if (Number.isFinite(d) && d > latestCachedDay) latestCachedDay = d;
   }
-  const cacheCount = cache.size;
-  const isCold = cacheCount < days * 0.3;
-  const isStale = latestCachedDay > 0 && today - latestCachedDay > STALE_DAYS * ONE_DAY;
-  const needFetch = isCold || isStale;
+  const yesterday = today - ONE_DAY;
+  const isCold = cache.size < days * 0.3;
+  const isStale = latestCachedDay > 0 && yesterday - latestCachedDay > STALE_DAYS * ONE_DAY;
+  let needFetch = isCold || isStale;
+
+  // Cooldown: even if the cache is cold/stale, don't retry an upstream
+  // we just hit. Prevents modal-open spam from cycling 429s on symbols
+  // whose backfill returned empty.
+  if (needFetch) {
+    const lastFetched = await readFetchedAt(symbol);
+    if (lastFetched > 0 && Date.now() - lastFetched < FETCH_COOLDOWN_MS) {
+      needFetch = false;
+    }
+  }
 
   if (needFetch) {
-    const fresh =
-      kind === 'crypto'
-        ? await fetchCryptoDaily(symbol, fromDay, today)
-        : await fetchStockDaily(symbol, days);
+    const fresh = await fetchDailyOnce(symbol, kind, fromDay, today, days);
+    // Mark the attempt regardless of outcome so a failing upstream
+    // doesn't get hammered on every modal open.
+    await markFetched(symbol);
     if (fresh.length) {
-      writeDailyCache(symbol, kind === 'crypto' ? 'binance-klines' : 'yahoo-chart', fresh);
+      await writeDailyCache(symbol, kind === 'crypto' ? 'binance-klines' : 'yahoo-chart', fresh);
       for (const p of fresh) cache.set(dateKey(p.day), p.price);
     }
   }
@@ -150,14 +216,36 @@ export async function symbolRoutes(app: FastifyInstance) {
     const { days = '180', kind = 'stock' } = req.query as { days?: string; kind?: 'stock' | 'crypto' };
     const n = Math.min(365, Math.max(30, Number(days) || 180));
 
-    const trades = db
-      .prepare('SELECT * FROM trades WHERE symbol = ? ORDER BY ts ASC')
-      .all(sym) as TradeRow[];
+    const { rows: trades } = await pool.query<TradeRow>(
+      'SELECT * FROM trades WHERE symbol = $1 ORDER BY ts ASC',
+      [sym],
+    );
 
-    const totalQty = trades.reduce((a, t) => (t.side === 'BUY' ? a + t.qty : t.side === 'SELL' ? a - t.qty : a), 0);
-    const buyValue = trades.filter((t) => t.side === 'BUY').reduce((a, t) => a + t.qty * t.price_usd, 0);
-    const buyQty = trades.filter((t) => t.side === 'BUY').reduce((a, t) => a + t.qty, 0);
-    const avgUSD = buyQty > 0 ? buyValue / buyQty : 0;
+    // Spot-only view (excludes Earn rewards) keeps cost basis aligned with
+    // what brokers like DIME show. Reward rows land as side:'BUY' with
+    // source:'api-reward' but should not contribute to cost or realized PNL.
+    const isReward = (t: TradeRow) => t.source === 'api-reward';
+    const spotTrades = trades.filter(
+      (t) => (t.side === 'BUY' || t.side === 'SELL') && !isReward(t),
+    );
+    const rewardRows = trades.filter(isReward);
+    const agg = aggregateTrades(spotTrades);
+
+    // Aggregate Earn rewards into one block so the client can render a
+    // single "Total earned" stat instead of a wall of $0.00 rows.
+    const earned = rewardRows.reduce(
+      (acc, r) => {
+        const valueUSD = r.qty * r.price_usd;
+        acc.qty += r.qty;
+        acc.valueUSD += valueUSD;
+        acc.valueTHB += valueUSD * r.fx_at_trade;
+        acc.count += 1;
+        if (r.ts < acc.firstTs || acc.firstTs === 0) acc.firstTs = r.ts;
+        if (r.ts > acc.lastTs) acc.lastTs = r.ts;
+        return acc;
+      },
+      { qty: 0, valueUSD: 0, valueTHB: 0, count: 0, firstTs: 0, lastTs: 0 },
+    );
 
     const todayUSD = await getPrice(sym, kind);
     const series = await buildSeries(sym, kind, n, todayUSD);
@@ -165,16 +253,22 @@ export async function symbolRoutes(app: FastifyInstance) {
     return {
       symbol: sym,
       todayUSD,
-      avgUSD,
-      heldQty: totalQty,
+      avgUSD: agg.avgUSD,
+      heldQty: agg.qty,
+      realizedUSD: agg.realizedUSD,
+      realizedTHB: agg.realizedTHB,
+      realizedFxContribTHB: agg.realizedFxContribTHB,
       series,
-      trades: trades.map((t) => ({
+      earned,
+      // Trades list now spot-only — Earn rewards roll up into `earned`.
+      trades: spotTrades.map((t) => ({
         id: t.id,
         ts: t.ts,
         side: t.side,
         qty: t.qty,
         price_usd: t.price_usd,
         fx_at_trade: t.fx_at_trade,
+        commission: t.commission,
         source: t.source,
       })),
     };

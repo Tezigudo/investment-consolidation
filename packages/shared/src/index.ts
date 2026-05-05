@@ -1,4 +1,4 @@
-export type Platform = 'DIME' | 'Binance' | 'Bank';
+export type Platform = 'DIME' | 'Binance' | 'Bank' | 'OnChain';
 export type TradeSide = 'BUY' | 'SELL' | 'DIV';
 
 export interface TradeRow {
@@ -33,6 +33,10 @@ export interface EnrichedPosition {
   pnlTHB: number;
   pnlPctTHB: number;
   fxContribTHB: number;
+  // Lifetime realized PNL on this symbol — needed by the "DIME view"
+  // toggle to display avg cost as net-cash-invested per share.
+  realizedUSD: number;
+  realizedTHB: number;
 }
 
 export interface Totals {
@@ -54,11 +58,13 @@ export interface PortfolioSnapshot {
     dime: EnrichedPosition[];
     binance: EnrichedPosition[];
     bank: EnrichedPosition[];
+    onchain: EnrichedPosition[];
   };
   totals: {
     dime: Totals;
     binance: Totals;
     bank: Totals;
+    onchain: Totals;
     all: Totals;
   };
   asOf: number;

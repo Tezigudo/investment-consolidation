@@ -1,29 +1,55 @@
 import cron from 'node-cron';
 import { config } from '../config.js';
-import { db } from '../db/client.js';
+import { pool } from '../db/client.js';
 import { refreshPrices } from '../services/prices.js';
 import { getUSDTHB } from '../services/fx.js';
 import { refreshBinance } from '../services/portfolio.js';
 import { importBinanceHistory, isBinanceSyncSeeded } from '../services/binance-import.js';
 import { refreshDailyUSDTHB } from '../services/fx-history.js';
+import { refreshOnChainWLD } from '../services/onchain.js';
+
+// Symbols held on-chain that need a USDT price even though we never
+// trade them through Binance. Keeps the crypto price refresh aware of
+// off-exchange holdings so the dashboard always has a fresh quote.
+const ONCHAIN_PRICED_SYMBOLS = ['WLD'];
 
 let started = false;
 
+async function distinctSymbols(platform: 'DIME' | 'Binance'): Promise<string[]> {
+  const { rows } = await pool.query<{ symbol: string }>(
+    'SELECT DISTINCT symbol FROM trades WHERE platform = $1',
+    [platform],
+  );
+  return rows.map((r) => r.symbol);
+}
+
+function withOnChainCrypto(crypto: string[]): string[] {
+  if (!config.onchainEnabled) return crypto;
+  const set = new Set(crypto);
+  for (const s of ONCHAIN_PRICED_SYMBOLS) set.add(s);
+  return Array.from(set);
+}
+
 async function warmOnce() {
   try {
-    const dime = db.prepare("SELECT DISTINCT symbol FROM trades WHERE platform = 'DIME'").all() as {
-      symbol: string;
-    }[];
-    const binance = db
-      .prepare("SELECT DISTINCT symbol FROM trades WHERE platform = 'Binance'")
-      .all() as { symbol: string }[];
-    await refreshPrices({
-      stocks: dime.map((r) => r.symbol),
-      crypto: binance.map((r) => r.symbol),
-    });
+    const [stocks, crypto] = await Promise.all([
+      distinctSymbols('DIME'),
+      distinctSymbols('Binance'),
+    ]);
+    await refreshPrices({ stocks, crypto: withOnChainCrypto(crypto) });
     if (config.binanceEnabled) {
       const fx = await getUSDTHB();
       await refreshBinance(fx.rate);
+    }
+    if (config.onchainEnabled) {
+      try {
+        const snap = await refreshOnChainWLD();
+        console.log(
+          `[jobs] onchain WLD warmed: ${snap.totalQty.toFixed(6)} (wallet ${snap.walletQty.toFixed(6)} + ${snap.vaults.length} vault(s))`,
+        );
+      } catch (e) {
+        console.warn('[jobs] onchain warm-up failed:', (e as Error).message);
+      }
     }
     console.log('[jobs] initial warm-up complete');
   } catch (e) {
@@ -39,8 +65,9 @@ export function startJobs() {
   void warmOnce();
 
   // Incremental Binance history sync on server start (if already seeded).
-  if (config.binanceEnabled && isBinanceSyncSeeded()) {
+  if (config.binanceEnabled) {
     void (async () => {
+      if (!(await isBinanceSyncSeeded())) return;
       try {
         console.log('[jobs] binance history: incremental sync on startup…');
         const r = await importBinanceHistory();
@@ -56,16 +83,11 @@ export function startJobs() {
   // Prices every 5 min (stocks) + crypto
   cron.schedule('*/5 * * * *', async () => {
     try {
-      const dime = db.prepare("SELECT DISTINCT symbol FROM trades WHERE platform = 'DIME'").all() as {
-        symbol: string;
-      }[];
-      const binance = db
-        .prepare("SELECT DISTINCT symbol FROM trades WHERE platform = 'Binance'")
-        .all() as { symbol: string }[];
-      await refreshPrices({
-        stocks: dime.map((r) => r.symbol),
-        crypto: binance.map((r) => r.symbol),
-      });
+      const [stocks, crypto] = await Promise.all([
+        distinctSymbols('DIME'),
+        distinctSymbols('Binance'),
+      ]);
+      await refreshPrices({ stocks, crypto: withOnChainCrypto(crypto) });
       console.log('[jobs] prices refreshed');
     } catch (e) {
       console.warn('[jobs] prices failed:', (e as Error).message);
@@ -81,6 +103,19 @@ export function startJobs() {
       console.log('[jobs] binance holdings refreshed');
     } catch (e) {
       console.warn('[jobs] binance failed:', (e as Error).message);
+    }
+  });
+
+  // On-chain WLD balance every 5 min — cheap (2-3 RPC reads), no key needed
+  cron.schedule('*/5 * * * *', async () => {
+    if (!config.onchainEnabled) return;
+    try {
+      const snap = await refreshOnChainWLD();
+      console.log(
+        `[jobs] onchain WLD: ${snap.totalQty.toFixed(6)} (wallet ${snap.walletQty.toFixed(6)} + ${snap.vaults.length} vault(s))`,
+      );
+    } catch (e) {
+      console.warn('[jobs] onchain failed:', (e as Error).message);
     }
   });
 
@@ -105,7 +140,7 @@ export function startJobs() {
   // `bun run import:binance` once manually; afterwards this runs incrementally.
   cron.schedule('15 * * * *', async () => {
     if (!config.binanceEnabled) return;
-    if (!isBinanceSyncSeeded()) {
+    if (!(await isBinanceSyncSeeded())) {
       console.log(
         '[jobs] binance history: no cursors yet — run `bun run import:binance` once before cron takes over',
       );

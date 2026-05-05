@@ -1,12 +1,9 @@
-import Database from 'better-sqlite3';
-import fs from 'node:fs';
-import { config } from '../config.js';
-import { runMigrations } from './migrations.js';
+import { pgPool } from './pg.js';
+import { runPgMigrations } from './pg-migrations.js';
 
-fs.mkdirSync(config.dataDir, { recursive: true });
+export { pgPool as pool } from './pg.js';
 
-export const db = new Database(config.dbPath);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-
-runMigrations(db);
+// Run migrations on first import — keeps the same auto-init behavior the
+// SQLite client used to have. Top-level await means any module that
+// imports `pool` blocks until the schema is current.
+await runPgMigrations(pgPool);

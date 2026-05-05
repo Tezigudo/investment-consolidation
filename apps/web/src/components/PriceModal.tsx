@@ -21,7 +21,7 @@ interface TradeRow {
   qty: number;
   price_usd: number;
   fx_at_trade: number;
-  commission: number;
+  commission: number | null;
   source: string | null;
 }
 

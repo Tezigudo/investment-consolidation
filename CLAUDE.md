@@ -213,8 +213,8 @@ When memory_search returns a fact marked ⚠ STALE:
 3. NEVER act on STALE facts without verification
 
 ## Process Management (Windows)
-- NEVER use `taskkill //F //IM node.exe` — kills ALL Node.js INCLUDING Claude Code CLI!
-- Use: `npx kill-port PORT` or find PID via `netstat -ano | findstr :PORT` then `taskkill //F //PID XXXX`
+- NEVER use `taskkill /F /IM node.exe` — kills ALL Node.js INCLUDING Claude Code CLI!
+- Use: `npx kill-port PORT` or find PID via `netstat -ano | findstr :PORT` then `taskkill /F /PID XXXX`
 
 ## Git Rules
 - Commit often, small atomic changes. Format: "[type] what and why"

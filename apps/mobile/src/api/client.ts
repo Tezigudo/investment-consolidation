@@ -114,7 +114,10 @@ export const api = {
   ): Promise<ImportSummary> => {
     const [base, token] = await Promise.all([getApiUrl(), getApiToken()]);
     const body = new FormData();
-    body.append('file', file as unknown as Blob);
+    // RN file objects are { uri, name, type } — not real Blobs. Relax the
+    // type only for the FormData append; the rest of the type is accurate.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    body.append('file', file as any);
     const headers = new Headers();
     if (token) headers.set('Authorization', `Bearer ${token}`);
     const res = await fetch(`${base}/import/trades-csv?platform=${platform}`, {

@@ -209,7 +209,9 @@ export default function PositionDetailScreen() {
                 <LegendDot color={colors.green} label="BUY" />
                 <LegendDot color={colors.red} label="SELL" />
                 <LegendDot color={colors.amber} label="DIV" />
-                <LegendDot color={colors.textMuted} label={`avg $${displayAvg.toFixed(2)}`} dashed />
+                {displayAvg > 0 && (
+                  <LegendDot color={colors.textMuted} label={`avg $${displayAvg.toFixed(2)}`} dashed />
+                )}
               </View>
             </>
           ) : (

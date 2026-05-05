@@ -10,7 +10,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // the app just works on a real device on the same Wi-Fi.
 const URL_KEY = '@consolidate/apiUrl';
 const TOKEN_KEY = '@consolidate/apiToken';
-const ENV_URL = process.env.EXPO_PUBLIC_API_URL || '';
+const ENV_URL = (process.env.EXPO_PUBLIC_API_URL || '').replace(/\/$/, '');
 const FALLBACK = 'http://localhost:4000';
 
 let cachedUrl: string | null = null;
@@ -19,7 +19,8 @@ let cachedToken: string | null = null;
 export async function getApiUrl(): Promise<string> {
   if (cachedUrl) return cachedUrl;
   const stored = await AsyncStorage.getItem(URL_KEY);
-  cachedUrl = stored || ENV_URL || FALLBACK;
+  const raw = stored || ENV_URL || FALLBACK;
+  cachedUrl = raw.replace(/\/$/, '');
   return cachedUrl;
 }
 
@@ -43,5 +44,5 @@ export async function setApiToken(token: string): Promise<void> {
 }
 
 export function getApiUrlSync(): string {
-  return cachedUrl || ENV_URL || FALLBACK;
+  return (cachedUrl || ENV_URL || FALLBACK).replace(/\/$/, '');
 }

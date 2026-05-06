@@ -1,0 +1,27 @@
+{
+  "_comment": "Project-shared Claude Code config — committed via .gitignore exception. Personal overrides go in .claude/settings.local.json (which IS gitignored). Hooks fire automatically; their scripts live in tools/claude-hooks/ so they're not buried under the partially-ignored .claude/ tree.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/tools/claude-hooks/check-staged-secrets.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$CLAUDE_PROJECT_DIR/tools/claude-hooks/check-migrations.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

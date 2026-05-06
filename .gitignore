@@ -24,8 +24,13 @@ secrets/
 consolidate.dump
 pg16
 
-# Local agent / Claude Code config (per-machine)
-.claude/
+# Local agent / Claude Code config (per-machine).
+# Project-shared slash commands + hook config are committed via the
+# explicit `!` exceptions below; personal stuff (settings.local.json,
+# plugin-installed skills) stays ignored.
+.claude/*
+!.claude/commands/
+!.claude/settings.json
 .agents/
 skills-lock.json
 

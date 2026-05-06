@@ -3,6 +3,8 @@ import { usePortfolio, useTrades } from '../hooks/usePortfolio';
 import { fmtMoney, fmtPct, fmtTHB, fmtUSD } from '../lib/format';
 import { TopBar } from '../components/TopBar';
 import { SettingsPopover } from '../components/SettingsPopover';
+import { DashboardSkeleton } from '../components/DashboardSkeleton';
+import { Toast } from '../components/Toast';
 import { DualHeroCell } from '../components/DualHeroCell';
 import { Donut, WinLossBar, AreaChart } from '../components/charts';
 import { PriceModal } from '../components/PriceModal';
@@ -52,33 +54,30 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
     return out;
   }, [currency, t?.costTHB, t?.costUSD, t?.marketTHB, t?.marketUSD]);
 
-  if (error) {
-    // Render the gear popover even in the error state — otherwise a 401
-    // (no token configured) traps the user with no UI to set the token.
-    const msg = (error as Error).message;
-    const is401 = /\b401\b/.test(msg);
+  // Both error and loading states render the same skeleton + minimal
+  // header. Error additionally pops a top-right Toast — keeps the user
+  // oriented (sees where data will land) and points at the gear icon
+  // in the header so they know where to fix auth.
+  if (error || isLoading || !snap || !t) {
+    const errMsg = error ? (error as Error).message : null;
+    const is401 = errMsg ? /\b401\b/.test(errMsg) : false;
     return (
-      <div style={{ padding: 40 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>Consolidate</div>
-          <SettingsPopover />
-        </div>
-        <div style={{ color: 'var(--down)', marginBottom: 8 }}>
-          {is401
-            ? 'API: 401 Unauthorized. Click ⚙ above and paste your bearer token.'
-            : `API error: ${msg}. Is the backend running?`}
-        </div>
-        {!is401 && (
-          <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-            (<code>npm run dev</code> at repo root)
-          </div>
+      <>
+        <MinimalHeader />
+        <DashboardSkeleton />
+        {errMsg && (
+          <Toast
+            tone={is401 ? 'warn' : 'error'}
+            title={is401 ? 'Sign in needed' : 'API error'}
+            message={
+              is401
+                ? 'Click the ⚙ in the top-right and paste your bearer token to load your portfolio.'
+                : `${errMsg}. Check your API URL in ⚙ settings.`
+            }
+          />
         )}
-      </div>
+      </>
     );
-  }
-
-  if (isLoading || !snap || !t) {
-    return <div style={{ padding: 40, color: 'var(--muted)' }}>Loading portfolio…</div>;
   }
 
   const usdthb = snap.fx.usdthb;
@@ -569,6 +568,25 @@ function TxRow({ tx }: { tx: TradeRow }) {
         </div>
         <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--muted)' }}>FX {tx.fx_at_trade.toFixed(2)}</div>
       </div>
+    </div>
+  );
+}
+
+// Slim header used during loading/error — gives the user the gear
+// button (and brand) without depending on portfolio data being loaded.
+function MinimalHeader() {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '14px 28px',
+        borderBottom: '1px solid var(--border)',
+      }}
+    >
+      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>Consolidate</div>
+      <SettingsPopover />
     </div>
   );
 }

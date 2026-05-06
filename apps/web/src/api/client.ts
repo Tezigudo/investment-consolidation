@@ -39,8 +39,11 @@ export interface DimeMailResult {
 //   1. localStorage override (Settings → Server URL) — lets user retarget
 //      a deployed web build at a different API without a redeploy.
 //   2. VITE_API_URL baked at build time (Cloudflare Pages env var).
-//   3. /api fallback — only meaningful in dev (Vite proxies to :4000).
+//   3. PROD_DEFAULT — the prod Fly URL, used when the bundle is opened
+//      from any host other than localhost / vite dev.
+//   4. /api fallback — Vite dev server proxies this to :4000.
 const ENV_BASE = import.meta.env.VITE_API_URL as string | undefined;
+const PROD_DEFAULT = 'https://investment-consolidation.fly.dev';
 const TOKEN_KEY = 'consolidate.apiToken';
 const URL_KEY = 'consolidate.apiUrl';
 
@@ -50,6 +53,12 @@ function readBase(): string {
     if (stored) return stored.replace(/\/$/, '');
   }
   if (ENV_BASE) return ENV_BASE.replace(/\/$/, '');
+  // Vite proxies /api → :4000 only on localhost. On any deployed host
+  // (Cloudflare Pages), fall through to the prod Fly URL instead of /api,
+  // which would otherwise loop back to the Pages domain.
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+    return PROD_DEFAULT;
+  }
   return '/api';
 }
 

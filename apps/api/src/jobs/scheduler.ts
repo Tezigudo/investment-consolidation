@@ -7,11 +7,16 @@ import { refreshBinance } from '../services/portfolio.js';
 import { importBinanceHistory, isBinanceSyncSeeded } from '../services/binance-import.js';
 import { refreshDailyUSDTHB } from '../services/fx-history.js';
 import { refreshOnChainWLD } from '../services/onchain.js';
+import { warmDailyHistoryBatch } from '../services/price-history.js';
 
 // Symbols held on-chain that need a USDT price even though we never
 // trade them through Binance. Keeps the crypto price refresh aware of
 // off-exchange holdings so the dashboard always has a fresh quote.
 const ONCHAIN_PRICED_SYMBOLS = ['WLD'];
+
+// 180d matches the chart endpoint's default. Warmer windows == longer
+// upstream calls; 180 keeps each backfill under ~1.5s for crypto.
+const CHART_HISTORY_DAYS = 180;
 
 let started = false;
 
@@ -28,6 +33,23 @@ function withOnChainCrypto(crypto: string[]): string[] {
   const set = new Set(crypto);
   for (const s of ONCHAIN_PRICED_SYMBOLS) set.add(s);
   return Array.from(set);
+}
+
+async function warmDailyChartCache() {
+  try {
+    const [stocks, crypto] = await Promise.all([
+      distinctSymbols('DIME'),
+      distinctSymbols('Binance'),
+    ]);
+    const entries = [
+      ...stocks.map((symbol) => ({ symbol, kind: 'stock' as const })),
+      ...withOnChainCrypto(crypto).map((symbol) => ({ symbol, kind: 'crypto' as const })),
+    ];
+    const r = await warmDailyHistoryBatch(entries, CHART_HISTORY_DAYS);
+    console.log(`[jobs] chart cache warm: ${r.warmed} fetched, ${r.skipped} already warm`);
+  } catch (e) {
+    console.warn('[jobs] chart cache warm failed:', (e as Error).message);
+  }
 }
 
 async function warmOnce() {
@@ -63,6 +85,9 @@ export function startJobs() {
 
   // Fire-and-forget warm-up so the first dashboard load isn't empty.
   void warmOnce();
+  // And one chart-cache warm so the first modal open after a deploy is
+  // fast even if the user hasn't touched a chart in days.
+  void warmDailyChartCache();
 
   // Incremental Binance history sync on server start (if already seeded).
   if (config.binanceEnabled) {
@@ -117,6 +142,14 @@ export function startJobs() {
     } catch (e) {
       console.warn('[jobs] onchain failed:', (e as Error).message);
     }
+  });
+
+  // Chart cache once a day at 02:30 UTC (~09:30 Bangkok) — the warm
+  // function skips symbols that are already current, so this is mostly
+  // cheap on the steady state and only does real work after a long
+  // weekend or when a new symbol shows up.
+  cron.schedule('30 2 * * *', () => {
+    void warmDailyChartCache();
   });
 
   // FX every hour (live + daily series tail)

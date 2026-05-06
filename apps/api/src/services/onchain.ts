@@ -137,12 +137,23 @@ async function upsertVaultState(row: VaultStateRow): Promise<void> {
   );
 }
 
-// Walks Deposit + Withdraw events filtered by indexed `owner = wallet`
-// across [fromBlock, toBlock] in chunks. Returns the total assets
-// deposited and withdrawn in raw token units across all matching
-// events. Public Alchemy chunk cap is 10k blocks; with the wallet topic
-// filter the response per chunk is tiny so this stays well under the
-// response-size cap.
+// Walks Deposit + Withdraw events for the wallet across [fromBlock,
+// toBlock] in chunks. Returns the total assets deposited and withdrawn
+// in raw token units across all matching events. Public Alchemy chunk
+// cap is 10k blocks unless the response is small; with topic filters
+// the response stays tiny so we use a much larger chunk size.
+//
+// Filter choice:
+//   Deposit  → indexed `owner` == wallet. Morpho UI calls
+//              `vault.deposit(assets, owner=user)` so the user is the
+//              owner of newly-minted shares regardless of who the
+//              calling bundler is.
+//   Withdraw → indexed `receiver` == wallet. Morpho UI pulls the user's
+//              shares to the bundler first (via approval), then calls
+//              `vault.redeem(shares, receiver=user, owner=bundler)`.
+//              Filtering by `owner` would miss ~95% of withdrawals (the
+//              bundler owns the shares at burn time). `receiver` is
+//              where the assets actually flow, which is what we want.
 async function walkVaultEvents(
   client: PublicClient,
   vault: Address,
@@ -166,7 +177,7 @@ async function walkVaultEvents(
       client.getLogs({
         address: vault,
         event: erc4626WithdrawEvent,
-        args: { owner: wallet },
+        args: { receiver: wallet },
         fromBlock: cursor,
         toBlock: chunkEnd,
       }),
@@ -201,11 +212,15 @@ export async function readOnchainEarnForSymbol(
     const deposits = BigInt(r.total_deposits_raw);
     const withdrawals = BigInt(r.total_withdrawals_raw);
     const current = BigInt(r.current_assets_raw);
-    const netDeposits = deposits > withdrawals ? deposits - withdrawals : 0n;
+    // Lifetime yield = (assets out via withdraws + assets still held)
+    // − assets deposited. Captures yield that's already been harvested
+    // AND yield still sitting in the vault. Reduces to (current − deposits)
+    // when the user has never withdrawn.
+    const totalOut = withdrawals + current;
     // Clamp at zero — vault losses (rare but possible) shouldn't show
     // as negative "earnings" in the dashboard. The position's PNL math
     // already reflects the real loss separately.
-    const yieldRaw = current > netDeposits ? current - netDeposits : 0n;
+    const yieldRaw = totalOut > deposits ? totalOut - deposits : 0n;
     earnedQty += toTokenQty(yieldRaw, r.decimals);
     vaultCount += 1;
   }

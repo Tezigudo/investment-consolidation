@@ -154,7 +154,7 @@ export const PG_MIGRATIONS: Migration[] = [
     name: 'onchain_vault_state',
     up: `
       -- Per-(wallet, vault) cumulative deposit/withdrawal totals so we
-      -- can derive vault yield as: current_assets - (deposits - withdrawals).
+      -- can derive vault yield as: (withdrawals + current) - deposits.
       -- Raw amounts kept as NUMERIC(78,0) to preserve uint256 precision —
       -- 18-decimal token quantities exceed BIGINT for some tokens.
       CREATE TABLE IF NOT EXISTS onchain_vault_state (
@@ -171,6 +171,18 @@ export const PG_MIGRATIONS: Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS idx_onchain_vault_state_symbol
         ON onchain_vault_state(symbol);
+    `,
+  },
+  {
+    version: 7,
+    name: 'onchain_vault_state_rescan',
+    up: `
+      -- Wipe so the next on-chain refresh re-walks Deposit/Withdraw
+      -- events with the corrected filter (Withdraw now matches by
+      -- indexed receiver, not owner — Morpho's bundler routes burn
+      -- shares it owns on the user's behalf, so the prior owner-only
+      -- filter missed ~95% of withdrawals).
+      DELETE FROM onchain_vault_state;
     `,
   },
 ];

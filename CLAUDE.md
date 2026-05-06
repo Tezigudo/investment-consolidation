@@ -98,6 +98,12 @@ Tables carry intent: `deposits.fx_locked`, `trades.fx_at_trade`, and `positions.
 
 `positions.updated_at` is a **`BIGINT`** Unix-ms timestamp, not a `timestamptz`. Pass `Date.now()` not `new Date()`. (Same for `cash.updated_at`.)
 
+## Default to local
+
+Ad-hoc verification ("test the endpoint", "check the API", "curl it") defaults to **local** dev: `http://localhost:4000` for the API, `http://localhost:5173` for the web (which proxies `/api` to :4000), the local docker-compose Postgres for SQL. Only hit Fly / Cloudflare / Neon when the user explicitly says "prod" / "Fly" / names the deployed URL, OR invokes one of the named-prod slash commands (`/check-prod`, `/deploy-api`, `/onchain-state`).
+
+Touching prod silently burns deploy quota, can race with cron-modifying state, and can mask local bugs. If unsure which environment the user means, ask one clarifying line before running.
+
 ## Production deployment
 
 | Layer | Host | URL |

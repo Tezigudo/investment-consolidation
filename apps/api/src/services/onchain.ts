@@ -142,7 +142,7 @@ export async function refreshOnChainWLD(): Promise<OnChainWLDSnapshot> {
        cost_basis_thb = EXCLUDED.cost_basis_thb,
        sector = EXCLUDED.sector,
        updated_at = EXCLUDED.updated_at`,
-    [snap.totalQty, avgUSD, costTHB, new Date()],
+    [snap.totalQty, avgUSD, costTHB, Date.now()],
   );
 
   // One-shot cleanup: an early version of the chart wired OnChain →

@@ -40,8 +40,7 @@ export interface DimeMailResult {
 //      a deployed web build at a different API without a redeploy.
 //   2. VITE_API_URL baked at build time (Cloudflare Pages env var).
 //   3. /api fallback — only meaningful in dev (Vite proxies to :4000).
-const ENV_BASE = (import.meta as { env?: Record<string, string | undefined> }).env
-  ?.VITE_API_URL;
+const ENV_BASE = import.meta.env.VITE_API_URL as string | undefined;
 const TOKEN_KEY = 'consolidate.apiToken';
 const URL_KEY = 'consolidate.apiUrl';
 

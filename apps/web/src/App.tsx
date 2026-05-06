@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Dashboard } from './views/Dashboard';
 import { themeVars } from './lib/theme';
+import { getApiUrl, getApiToken, setApiUrl, setApiToken } from './api/client';
 import type { Currency } from '@consolidate/shared';
 
 const KEY = 'consolidate.prefs.v1';
@@ -27,10 +29,31 @@ export function App() {
   const [dark, setDark] = useState(init.dark);
   const [privacy, setPrivacy] = useState(init.privacy);
   const [tweaksOpen, setTweaksOpen] = useState(false);
+  const [apiUrlInput, setApiUrlInput] = useState(getApiUrl());
+  const [apiTokenInput, setApiTokenInput] = useState(getApiToken());
+  const [apiSavedMsg, setApiSavedMsg] = useState<string | null>(null);
+  const qc = useQueryClient();
 
   useEffect(() => {
     localStorage.setItem(KEY, JSON.stringify({ currency, dark, privacy }));
   }, [currency, dark, privacy]);
+
+  // Reload current values whenever the panel opens — covers the case of
+  // another tab updating localStorage between opens.
+  useEffect(() => {
+    if (tweaksOpen) {
+      setApiUrlInput(getApiUrl());
+      setApiTokenInput(getApiToken());
+    }
+  }, [tweaksOpen]);
+
+  const saveApiSettings = () => {
+    if (apiUrlInput.trim()) setApiUrl(apiUrlInput);
+    if (apiTokenInput.trim()) setApiToken(apiTokenInput);
+    setApiSavedMsg('Saved · refetching…');
+    qc.invalidateQueries();
+    setTimeout(() => setApiSavedMsg(null), 2000);
+  };
 
   return (
     <div style={{ ...themeVars(dark), minHeight: '100vh', background: 'var(--bg)', color: 'var(--text)' }}>
@@ -70,6 +93,71 @@ export function App() {
                 Off
               </button>
             </div>
+          </div>
+
+          <div style={{ borderTop: '1px solid var(--border)', marginTop: 12, paddingTop: 12 }}>
+            <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+              API URL
+            </div>
+            <input
+              type="url"
+              value={apiUrlInput}
+              onChange={(e) => setApiUrlInput(e.target.value)}
+              placeholder="https://investment-consolidation.fly.dev"
+              spellCheck={false}
+              style={{
+                width: '100%',
+                padding: '6px 8px',
+                background: 'var(--surface-2)',
+                border: '1px solid var(--border)',
+                borderRadius: 6,
+                color: 'var(--text)',
+                fontFamily: 'var(--mono)',
+                fontSize: 11,
+                marginBottom: 8,
+                boxSizing: 'border-box',
+              }}
+            />
+            <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+              Bearer token
+            </div>
+            <input
+              type="password"
+              value={apiTokenInput}
+              onChange={(e) => setApiTokenInput(e.target.value)}
+              placeholder="paste API_AUTH_TOKEN"
+              spellCheck={false}
+              style={{
+                width: '100%',
+                padding: '6px 8px',
+                background: 'var(--surface-2)',
+                border: '1px solid var(--border)',
+                borderRadius: 6,
+                color: 'var(--text)',
+                fontFamily: 'var(--mono)',
+                fontSize: 11,
+                marginBottom: 10,
+                boxSizing: 'border-box',
+              }}
+            />
+            <button
+              onClick={saveApiSettings}
+              style={{
+                padding: '6px 12px',
+                background: 'var(--accent)',
+                color: 'var(--bg)',
+                border: 'none',
+                borderRadius: 6,
+                cursor: 'pointer',
+                fontWeight: 600,
+                fontSize: 12,
+              }}
+            >
+              Save
+            </button>
+            {apiSavedMsg && (
+              <span style={{ marginLeft: 10, fontSize: 11, color: 'var(--muted)' }}>{apiSavedMsg}</span>
+            )}
           </div>
         </div>
       )}

@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 import { usePortfolio, useTrades } from '../hooks/usePortfolio';
 import { fmtMoney, fmtPct, fmtTHB, fmtUSD } from '../lib/format';
 import { TopBar } from '../components/TopBar';
-import { SettingsPopover } from '../components/SettingsPopover';
 import { DashboardSkeleton } from '../components/DashboardSkeleton';
 import { Toast } from '../components/Toast';
 import { DualHeroCell } from '../components/DualHeroCell';
@@ -71,8 +70,8 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
             title={is401 ? 'Sign in needed' : 'API error'}
             message={
               is401
-                ? 'Click the ⚙ in the top-right and paste your bearer token to load your portfolio.'
-                : `${errMsg}. Check your API URL in ⚙ settings.`
+                ? 'Click the ⚙ in the bottom-right and paste your bearer token to load your portfolio.'
+                : `${errMsg}. Check your API URL in the ⚙ settings (bottom-right).`
             }
           />
         )}
@@ -572,21 +571,21 @@ function TxRow({ tx }: { tx: TradeRow }) {
   );
 }
 
-// Slim header used during loading/error — gives the user the gear
-// button (and brand) without depending on portfolio data being loaded.
+// Slim header used during loading/error. Settings (API URL + bearer
+// token) live in the bottom-right Tweaks panel rendered at App level,
+// so the user has one consistent place to configure things — no
+// duplicated gear here.
 function MinimalHeader() {
   return (
     <div
       style={{
         display: 'flex',
-        justifyContent: 'space-between',
         alignItems: 'center',
         padding: '14px 28px',
         borderBottom: '1px solid var(--border)',
       }}
     >
       <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>Consolidate</div>
-      <SettingsPopover />
     </div>
   );
 }

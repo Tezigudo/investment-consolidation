@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { usePortfolio, useTrades } from '../hooks/usePortfolio';
 import { fmtMoney, fmtPct, fmtTHB, fmtUSD } from '../lib/format';
 import { TopBar } from '../components/TopBar';
+import { SettingsPopover } from '../components/SettingsPopover';
 import { DualHeroCell } from '../components/DualHeroCell';
 import { Donut, WinLossBar, AreaChart } from '../components/charts';
 import { PriceModal } from '../components/PriceModal';
@@ -52,9 +53,26 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
   }, [currency, t?.costTHB, t?.costUSD, t?.marketTHB, t?.marketUSD]);
 
   if (error) {
+    // Render the gear popover even in the error state — otherwise a 401
+    // (no token configured) traps the user with no UI to set the token.
+    const msg = (error as Error).message;
+    const is401 = /\b401\b/.test(msg);
     return (
-      <div style={{ padding: 40, color: 'var(--down)' }}>
-        API error: {(error as Error).message}. Is the backend running? (<code>npm run dev</code> at repo root)
+      <div style={{ padding: 40 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>Consolidate</div>
+          <SettingsPopover />
+        </div>
+        <div style={{ color: 'var(--down)', marginBottom: 8 }}>
+          {is401
+            ? 'API: 401 Unauthorized. Click ⚙ above and paste your bearer token.'
+            : `API error: ${msg}. Is the backend running?`}
+        </div>
+        {!is401 && (
+          <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+            (<code>npm run dev</code> at repo root)
+          </div>
+        )}
       </div>
     );
   }

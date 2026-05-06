@@ -4,6 +4,8 @@ import { getPrice } from '../services/prices.js';
 import { binancePublicGet } from './../services/binance-http.js';
 import { dateKey } from '../services/fx-history.js';
 import { aggregateTrades } from '../services/cost-basis.js';
+import { readOnchainEarnForSymbol } from '../services/onchain.js';
+import { getUSDTHB } from '../services/fx.js';
 import type { TradeRow } from '../db/types.js';
 
 // Real daily price history. Reads from `prices_daily` cache first, then
@@ -248,6 +250,21 @@ export async function symbolRoutes(app: FastifyInstance) {
     );
 
     const todayUSD = await getPrice(sym, kind);
+
+    // Fold on-chain vault yield into the same earned bucket so a single
+    // "Total earned" stat covers Binance Earn + on-chain. Marked-to-
+    // market at today's price (we don't track per-second yield events,
+    // only the cumulative delta vs. net deposits).
+    const onchain = await readOnchainEarnForSymbol(sym);
+    if (onchain && onchain.qty > 0 && todayUSD > 0) {
+      const fx = await getUSDTHB();
+      const valueUSD = onchain.qty * todayUSD;
+      earned.qty += onchain.qty;
+      earned.valueUSD += valueUSD;
+      earned.valueTHB += valueUSD * fx.rate;
+      earned.count += onchain.vaultCount;
+    }
+
     const series = await buildSeries(sym, kind, n, todayUSD);
 
     return {

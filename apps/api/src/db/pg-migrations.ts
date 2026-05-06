@@ -149,6 +149,30 @@ export const PG_MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 6,
+    name: 'onchain_vault_state',
+    up: `
+      -- Per-(wallet, vault) cumulative deposit/withdrawal totals so we
+      -- can derive vault yield as: current_assets - (deposits - withdrawals).
+      -- Raw amounts kept as NUMERIC(78,0) to preserve uint256 precision —
+      -- 18-decimal token quantities exceed BIGINT for some tokens.
+      CREATE TABLE IF NOT EXISTS onchain_vault_state (
+        symbol                TEXT NOT NULL,
+        wallet                TEXT NOT NULL,
+        vault                 TEXT NOT NULL,
+        decimals              SMALLINT NOT NULL,
+        total_deposits_raw    NUMERIC(78,0) NOT NULL DEFAULT 0,
+        total_withdrawals_raw NUMERIC(78,0) NOT NULL DEFAULT 0,
+        current_assets_raw    NUMERIC(78,0) NOT NULL DEFAULT 0,
+        last_scanned_block    BIGINT NOT NULL DEFAULT 0,
+        updated_at            BIGINT NOT NULL,
+        PRIMARY KEY (wallet, vault)
+      );
+      CREATE INDEX IF NOT EXISTS idx_onchain_vault_state_symbol
+        ON onchain_vault_state(symbol);
+    `,
+  },
 ];
 
 export async function runPgMigrations(pool: Pool) {

@@ -91,6 +91,8 @@ export function PriceModal({ position, currency, usdthb, onClose }: Props) {
   const hasEarned = earned.count > 0;
   const earnedNowUSD = earned.qty * last; // current mark-to-market value of accrued rewards
   const earnedNowTHB = earnedNowUSD * usdthb;
+  const airdrop = data?.airdrop ?? null;
+  const hasAirdrop = !!airdrop && airdrop.qty > 0;
 
   // Spot trades that fall inside the visible window. Earn/reward rows
   // are excluded so chart markers only represent buy/sell decisions.
@@ -300,6 +302,14 @@ export function PriceModal({ position, currency, usdthb, onClose }: Props) {
               value={`${earned.qty.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${position.symbol}`}
               color="var(--up)"
               tooltip={`${earned.count} Earn payouts · worth ${currency === 'THB' ? fmtTHB(earnedNowTHB) : fmtUSD(earnedNowUSD)} at today's price (${currency === 'THB' ? fmtTHB(earned.valueTHB) : fmtUSD(earned.valueUSD)} at receipt). Excluded from cost basis so PNL math stays clean.`}
+            />
+          )}
+          {hasAirdrop && airdrop && (
+            <Stat
+              label="Airdrop received"
+              value={`${airdrop.qty.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${position.symbol}`}
+              color="var(--up)"
+              tooltip={`${airdrop.count} drops from ${airdrop.sources} distributor contract(s) · ${currency === 'THB' ? fmtTHB(airdrop.valueTHB) : fmtUSD(airdrop.valueUSD)} at today's price. Free WLD received (e.g. Worldcoin weekly grant). Tracked separately from vault yield because it's "earned by being a verified human", not "earned by holding shares".`}
             />
           )}
         </div>

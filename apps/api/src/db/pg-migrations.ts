@@ -185,6 +185,31 @@ export const PG_MIGRATIONS: Migration[] = [
       DELETE FROM onchain_vault_state;
     `,
   },
+  {
+    version: 8,
+    name: 'onchain_airdrop_state',
+    up: `
+      -- Cumulative WLD (or other token) received by the wallet from a
+      -- specific distributor contract — typically the Worldcoin weekly
+      -- grant. Surfaced as a separate "Airdrop received" stat alongside
+      -- vault yield so the user can compare each metric independently.
+      CREATE TABLE IF NOT EXISTS onchain_airdrop_state (
+        symbol               TEXT NOT NULL,
+        wallet               TEXT NOT NULL,
+        source               TEXT NOT NULL,
+        decimals             SMALLINT NOT NULL,
+        total_received_raw   NUMERIC(78,0) NOT NULL DEFAULT 0,
+        event_count          INTEGER NOT NULL DEFAULT 0,
+        first_ts             BIGINT NOT NULL DEFAULT 0,
+        last_ts              BIGINT NOT NULL DEFAULT 0,
+        last_scanned_block   BIGINT NOT NULL DEFAULT 0,
+        updated_at           BIGINT NOT NULL,
+        PRIMARY KEY (wallet, source)
+      );
+      CREATE INDEX IF NOT EXISTS idx_onchain_airdrop_state_symbol
+        ON onchain_airdrop_state(symbol);
+    `,
+  },
 ];
 
 export async function runPgMigrations(pool: Pool) {

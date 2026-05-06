@@ -59,6 +59,16 @@ const EnvSchema = z.object({
   // came as a free claim from World App. Set to your acquisition cost
   // if you bought any.
   ONCHAIN_WLD_COST_USD: z.coerce.number().nonnegative().default(0),
+  // Comma-separated list of ERC-20 contract addresses that send WLD to
+  // the wallet as airdrops/grants (e.g. the Worldcoin weekly grant
+  // distributor). The dashboard sums incoming WLD from these specific
+  // addresses as a separate "Airdrop received" stat — distinct from
+  // vault yield, which represents share-price appreciation.
+  // Default address is the Worldcoin grant distributor on World Chain.
+  ONCHAIN_WLD_AIRDROP_SOURCES: z
+    .string()
+    .default('0x3Ef3D8bA38EBe18DB133cEc108f4D14CE00Dd9Ae')
+    .transform((s) => s.split(',').map((x) => x.trim()).filter(Boolean)),
 });
 
 export type AppConfig = z.infer<typeof EnvSchema> & {

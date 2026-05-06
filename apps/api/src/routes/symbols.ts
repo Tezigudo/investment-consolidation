@@ -4,7 +4,7 @@ import { getPrice } from '../services/prices.js';
 import { binancePublicGet } from './../services/binance-http.js';
 import { dateKey } from '../services/fx-history.js';
 import { aggregateTrades } from '../services/cost-basis.js';
-import { readOnchainEarnForSymbol } from '../services/onchain.js';
+import { readOnchainEarnForSymbol, readOnchainAirdropForSymbol } from '../services/onchain.js';
 import { getUSDTHB } from '../services/fx.js';
 import type { TradeRow } from '../db/types.js';
 
@@ -265,6 +265,27 @@ export async function symbolRoutes(app: FastifyInstance) {
       earned.count += onchain.vaultCount;
     }
 
+    // Airdrop is reported as its own block — semantically different from
+    // "earned" (yield) and shouldn't pollute that aggregate. Marked at
+    // today's price, same as on-chain vault yield.
+    const airdropAgg = await readOnchainAirdropForSymbol(sym);
+    let airdrop:
+      | { qty: number; valueUSD: number; valueTHB: number; count: number; sources: number; firstTs: number; lastTs: number }
+      | null = null;
+    if (airdropAgg && airdropAgg.qty > 0 && todayUSD > 0) {
+      const fx = await getUSDTHB();
+      const valueUSD = airdropAgg.qty * todayUSD;
+      airdrop = {
+        qty: airdropAgg.qty,
+        valueUSD,
+        valueTHB: valueUSD * fx.rate,
+        count: airdropAgg.count,
+        sources: airdropAgg.sources,
+        firstTs: airdropAgg.firstTs,
+        lastTs: airdropAgg.lastTs,
+      };
+    }
+
     const series = await buildSeries(sym, kind, n, todayUSD);
 
     return {
@@ -277,6 +298,7 @@ export async function symbolRoutes(app: FastifyInstance) {
       realizedFxContribTHB: agg.realizedFxContribTHB,
       series,
       earned,
+      airdrop,
       // Trades list now spot-only — Earn rewards roll up into `earned`.
       trades: spotTrades.map((t) => ({
         id: t.id,

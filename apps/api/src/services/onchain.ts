@@ -41,6 +41,14 @@ const erc4626WithdrawEvent = parseAbiItem(
   'event Withdraw(address indexed sender, address indexed receiver, address indexed owner, uint256 assets, uint256 shares)',
 );
 
+// Standard ERC-20 Transfer event — used to detect airdrop drops sent
+// to the wallet from a known distributor contract. Filtering by both
+// `from` (indexed) and `to` (indexed) keeps the response per chunk
+// trivially small.
+const erc20TransferEvent = parseAbiItem(
+  'event Transfer(address indexed from, address indexed to, uint256 value)',
+);
+
 // Scale a raw bigint token amount to a JS number safely. WLD balances
 // are well under Number.MAX_SAFE_INTEGER (2^53-1 ≈ 9e15) when expressed
 // in whole tokens, so dividing a bigint by BigInt(scale) in integer
@@ -227,6 +235,215 @@ export async function readOnchainEarnForSymbol(
   return { qty: earnedQty, vaultCount };
 }
 
+// ── Airdrop tracking ──────────────────────────────────────────────
+// Distinct from vault yield: counts WLD inflows from designated
+// distributor contracts (Worldcoin grant, etc.). Keeps the user's
+// "free WLD received" metric separate from share-price appreciation.
+
+interface AirdropStateRow {
+  symbol: string;
+  wallet: string;
+  source: string;
+  decimals: number;
+  totalReceivedRaw: bigint;
+  eventCount: number;
+  firstTs: number;
+  lastTs: number;
+  lastScannedBlock: bigint;
+}
+
+async function readAirdropState(wallet: string, source: string): Promise<AirdropStateRow | undefined> {
+  const { rows } = await pool.query<{
+    symbol: string;
+    wallet: string;
+    source: string;
+    decimals: number;
+    total_received_raw: string;
+    event_count: number;
+    first_ts: string;
+    last_ts: string;
+    last_scanned_block: string;
+  }>(
+    `SELECT symbol, wallet, source, decimals,
+            total_received_raw, event_count, first_ts, last_ts, last_scanned_block
+     FROM onchain_airdrop_state WHERE wallet = $1 AND source = $2`,
+    [wallet.toLowerCase(), source.toLowerCase()],
+  );
+  const r = rows[0];
+  if (!r) return undefined;
+  return {
+    symbol: r.symbol,
+    wallet: r.wallet,
+    source: r.source,
+    decimals: r.decimals,
+    totalReceivedRaw: BigInt(r.total_received_raw),
+    eventCount: Number(r.event_count),
+    firstTs: Number(r.first_ts),
+    lastTs: Number(r.last_ts),
+    lastScannedBlock: BigInt(r.last_scanned_block),
+  };
+}
+
+async function upsertAirdropState(row: AirdropStateRow): Promise<void> {
+  await pool.query(
+    `INSERT INTO onchain_airdrop_state(
+       symbol, wallet, source, decimals,
+       total_received_raw, event_count, first_ts, last_ts,
+       last_scanned_block, updated_at
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     ON CONFLICT (wallet, source) DO UPDATE SET
+       symbol = EXCLUDED.symbol,
+       decimals = EXCLUDED.decimals,
+       total_received_raw = EXCLUDED.total_received_raw,
+       event_count = EXCLUDED.event_count,
+       first_ts = EXCLUDED.first_ts,
+       last_ts = EXCLUDED.last_ts,
+       last_scanned_block = EXCLUDED.last_scanned_block,
+       updated_at = EXCLUDED.updated_at`,
+    [
+      row.symbol,
+      row.wallet.toLowerCase(),
+      row.source.toLowerCase(),
+      row.decimals,
+      row.totalReceivedRaw.toString(),
+      row.eventCount,
+      row.firstTs,
+      row.lastTs,
+      row.lastScannedBlock.toString(),
+      Date.now(),
+    ],
+  );
+}
+
+// Walks ERC-20 Transfer(from=source, to=wallet) events on the given
+// token. Returns sum of value, event count, and first/last block
+// timestamps observed. Block timestamps require a separate getBlock
+// call per chunk's first/last log — kept lazy (only fetched when there
+// are events) to avoid per-tick cost when nothing happened.
+async function walkAirdropEvents(
+  client: PublicClient,
+  token: Address,
+  source: Address,
+  wallet: Address,
+  fromBlock: bigint,
+  toBlock: bigint,
+): Promise<{ receivedRaw: bigint; count: number; firstTs: number; lastTs: number }> {
+  let receivedRaw = 0n;
+  let count = 0;
+  let firstBlk = 0n;
+  let lastBlk = 0n;
+  let cursor = fromBlock;
+  while (cursor <= toBlock) {
+    const chunkEnd = cursor + LOG_CHUNK_BLOCKS - 1n > toBlock ? toBlock : cursor + LOG_CHUNK_BLOCKS - 1n;
+    const logs = await client.getLogs({
+      address: token,
+      event: erc20TransferEvent,
+      args: { from: source, to: wallet },
+      fromBlock: cursor,
+      toBlock: chunkEnd,
+    });
+    for (const log of logs) {
+      receivedRaw += (log.args.value as bigint) ?? 0n;
+      count += 1;
+      const blk = log.blockNumber as bigint;
+      if (firstBlk === 0n || blk < firstBlk) firstBlk = blk;
+      if (blk > lastBlk) lastBlk = blk;
+    }
+    cursor = chunkEnd + 1n;
+  }
+  // Resolve first/last timestamps if we saw any events. One getBlock
+  // each — cheap. Skipped entirely on empty chunks.
+  let firstTs = 0;
+  let lastTs = 0;
+  if (count > 0) {
+    const [first, last] = await Promise.all([
+      client.getBlock({ blockNumber: firstBlk }),
+      firstBlk === lastBlk
+        ? client.getBlock({ blockNumber: firstBlk })
+        : client.getBlock({ blockNumber: lastBlk }),
+    ]);
+    firstTs = Number(first.timestamp) * 1000;
+    lastTs = Number(last.timestamp) * 1000;
+  }
+  return { receivedRaw, count, firstTs, lastTs };
+}
+
+// Refresh all configured airdrop sources for a single (wallet, token).
+// Incremental from each source's last_scanned_block.
+async function refreshAirdrops(
+  client: PublicClient,
+  token: Address,
+  wallet: Address,
+  decimals: number,
+  symbol: string,
+  latestBlock: bigint,
+): Promise<void> {
+  for (const sourceStr of config.ONCHAIN_WLD_AIRDROP_SOURCES) {
+    const source = getAddress(sourceStr);
+    try {
+      const prev = await readAirdropState(wallet, source);
+      const fromBlock = prev ? prev.lastScannedBlock + 1n : 0n;
+      let receivedRaw = prev?.totalReceivedRaw ?? 0n;
+      let count = prev?.eventCount ?? 0;
+      let firstTs = prev?.firstTs ?? 0;
+      let lastTs = prev?.lastTs ?? 0;
+      if (fromBlock <= latestBlock) {
+        const fresh = await walkAirdropEvents(client, token, source, wallet, fromBlock, latestBlock);
+        receivedRaw += fresh.receivedRaw;
+        count += fresh.count;
+        if (fresh.firstTs > 0 && (firstTs === 0 || fresh.firstTs < firstTs)) firstTs = fresh.firstTs;
+        if (fresh.lastTs > lastTs) lastTs = fresh.lastTs;
+      }
+      await upsertAirdropState({
+        symbol,
+        wallet,
+        source,
+        decimals,
+        totalReceivedRaw: receivedRaw,
+        eventCount: count,
+        firstTs,
+        lastTs,
+        lastScannedBlock: latestBlock,
+      });
+    } catch (e) {
+      console.warn(`[onchain] airdrop source ${source} walk failed:`, (e as Error).message);
+    }
+  }
+}
+
+// Read aggregated airdrop state for a symbol (sums across all
+// configured sources for the wallet). No RPC — pure DB read for use by
+// the chart endpoint.
+export async function readOnchainAirdropForSymbol(
+  symbol: string,
+): Promise<{ qty: number; count: number; firstTs: number; lastTs: number; sources: number } | null> {
+  const { rows } = await pool.query<{
+    decimals: number;
+    total_received_raw: string;
+    event_count: number;
+    first_ts: string;
+    last_ts: string;
+  }>(
+    `SELECT decimals, total_received_raw, event_count, first_ts, last_ts
+     FROM onchain_airdrop_state WHERE symbol = $1`,
+    [symbol],
+  );
+  if (!rows.length) return null;
+  let qty = 0;
+  let count = 0;
+  let firstTs = 0;
+  let lastTs = 0;
+  for (const r of rows) {
+    qty += toTokenQty(BigInt(r.total_received_raw), r.decimals);
+    count += Number(r.event_count);
+    const fts = Number(r.first_ts);
+    const lts = Number(r.last_ts);
+    if (fts > 0 && (firstTs === 0 || fts < firstTs)) firstTs = fts;
+    if (lts > lastTs) lastTs = lts;
+  }
+  return { qty, count, firstTs, lastTs, sources: rows.length };
+}
+
 export async function readWLDPosition(): Promise<OnChainWLDSnapshot> {
   if (!config.onchainEnabled) {
     return { totalQty: 0, walletQty: 0, vaults: [], earnedQty: 0 };
@@ -315,6 +532,17 @@ export async function readWLDPosition(): Promise<OnChainWLDSnapshot> {
       });
     } catch (e) {
       console.warn(`[onchain] vault ${vault} read failed:`, (e as Error).message);
+    }
+  }
+
+  // Refresh airdrop state for any configured distributor contracts.
+  // Independent of vault state — the user might have airdrops without
+  // a vault, or a vault without airdrops.
+  if (config.ONCHAIN_WLD_AIRDROP_SOURCES.length > 0) {
+    try {
+      await refreshAirdrops(client, wld, wallet, decimals, 'WLD', latestBlock);
+    } catch (e) {
+      console.warn('[onchain] airdrop refresh failed:', (e as Error).message);
     }
   }
 

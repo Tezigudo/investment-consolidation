@@ -62,6 +62,15 @@ export interface SymbolHistory {
     firstTs: number;
     lastTs: number;
   };
+  airdrop: {
+    qty: number;
+    valueUSD: number;
+    valueTHB: number;
+    count: number;
+    sources: number;
+    firstTs: number;
+    lastTs: number;
+  } | null;
   trades: {
     id: number;
     ts: number;

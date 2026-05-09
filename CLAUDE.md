@@ -70,6 +70,8 @@ Every trade row carries `fx_at_trade` (USDTHB at the moment of the fill). The pu
 
 The dashboard shows `pnlTHB - fxContribTHB` as "Market PNL" and `fxContribTHB` as "FX contribution." If you change cost-basis math, update `cost-basis.test.ts` (5 cases covering buy-only, partial sell, full sell + rebuy, DIV, and SELL-before-BUY).
 
+There's a **second cost-basis method** alongside weighted-avg: **FIFO**, computed by `aggregateTradesFIFO` and exposed on `EnrichedPosition.fifoCostUSD` / `fifoCostTHB`. This is what the DIME app uses ("Total cost" / "Cost per Share"). The web "DIME view" toggle and mobile cost-view switch render this number so the dashboard reconciles with what DIME shows. Don't conflate it with `costUSD - realizedUSD` (= net cash invested) — that's a third metric and matches neither weighted-avg nor FIFO. FIFO has its own tests in `cost-basis.test.ts`.
+
 ## CSV importer
 
 `src/services/csv-importer.ts` is intentionally lenient on headers — it accepts `Symbol`/`Ticker`/`Stock`, `Exchange Rate`/`FX`/`USDTHB`, etc. (see `HEADER_MAP`). New header variants: add them there.
@@ -285,6 +287,6 @@ Active: [new session]
 Last: [first session]
 
 ## Session Continuity
-Files: apps/web/src/vite-env.d.ts, apps/web/src/api/client.ts, apps/api/package.json, .dockerignore, Dockerfile
+State: No changes or facts in this session.
 
 # === END COGNILAYER ===

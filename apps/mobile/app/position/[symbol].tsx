@@ -94,7 +94,7 @@ export default function PositionDetailScreen() {
 
   const dimeAvg = position
     ? position.qty > 0
-      ? (position.costUSD - position.realizedUSD) / position.qty
+      ? position.fifoCostUSD / position.qty
       : position.avgUSD
     : 0;
   const displayAvg =

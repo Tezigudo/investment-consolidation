@@ -33,10 +33,13 @@ export interface EnrichedPosition {
   pnlTHB: number;
   pnlPctTHB: number;
   fxContribTHB: number;
-  // Lifetime realized PNL on this symbol — needed by the "DIME view"
-  // toggle to display avg cost as net-cash-invested per share.
   realizedUSD: number;
   realizedTHB: number;
+  // FIFO cost basis of currently-held shares — what the DIME app shows
+  // as "Total cost" / "Cost per Share". Falls back to weighted-avg cost
+  // (=costUSD) when there's no SELL history to disambiguate.
+  fifoCostUSD: number;
+  fifoCostTHB: number;
 }
 
 export interface Totals {

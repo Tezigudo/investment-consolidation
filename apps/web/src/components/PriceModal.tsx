@@ -89,18 +89,18 @@ export function PriceModal({ position, currency, usdthb, costView, onClose }: Pr
   const realizedTHB = data?.realizedTHB ?? 0;
   const hasRealized = Math.abs(realizedUSD) >= 0.005;
 
-  // DIME-style cost: total cash put in minus total cash taken out, divided
-  // by qty held. Folds realized PNL back into cost so the unrealized number
-  // matches what the DIME app shows. Standard view leaves cost basis
+  // DIME-style cost: FIFO. SELLs eat the oldest open lots first; what
+  // survives is the cost basis of the held qty. Matches the DIME app's
+  // "Total cost" / "Cost per Share" exactly. Standard view leaves cost
   // weighted-average-preserved and surfaces realized as its own stat.
   const isDimeView = costView === 'dime';
-  const dimeCostUSD = position.qty > 0 ? position.costUSD - realizedUSD : 0;
-  const dimeCostTHB = position.qty > 0 ? position.costTHB - realizedTHB : 0;
-  const dimeAvgUSD = position.qty > 0 ? dimeCostUSD / position.qty : position.avgUSD;
+  const dimeAvgUSD = position.qty > 0 ? position.fifoCostUSD / position.qty : position.avgUSD;
   const avgShown = isDimeView ? dimeAvgUSD : position.avgUSD;
-  const unrealizedUSDShown = isDimeView ? holdingUSD - dimeCostUSD : position.pnlUSD;
+  const unrealizedUSDShown = isDimeView
+    ? holdingUSD - position.fifoCostUSD
+    : position.pnlUSD;
   const unrealizedTHBShown = isDimeView
-    ? position.qty * last * usdthb - dimeCostTHB
+    ? position.qty * last * usdthb - position.fifoCostTHB
     : position.pnlTHB;
   const earned = data?.earned ?? { qty: 0, valueUSD: 0, valueTHB: 0, count: 0, firstTs: 0, lastTs: 0 };
   const hasEarned = earned.count > 0;
@@ -288,7 +288,7 @@ export function PriceModal({ position, currency, usdthb, costView, onClose }: Pr
             value={fmt(avgShown)}
             muted
             tooltip={isDimeView
-              ? 'DIME-style: (BUY total cash − SELL total cash) ÷ qty held. Matches the "Cost per Share" the DIME app shows.'
+              ? 'FIFO cost basis of held shares (matches the DIME app exactly). SELLs eat the oldest lots first; the surviving lots\' cost-per-share is shown here.'
               : undefined}
           />
           <Stat label="Holding value" value={fmt(holdingUSD)} />
@@ -297,7 +297,7 @@ export function PriceModal({ position, currency, usdthb, costView, onClose }: Pr
             value={currency === 'THB' ? fmtTHB(unrealizedTHBShown, { sign: true }) : fmtUSD(unrealizedUSDShown, { sign: true })}
             color={unrealizedUSDShown >= 0 ? 'var(--up)' : 'var(--down)'}
             tooltip={isDimeView
-              ? 'Holding value − net cash invested. Realized gains from past SELLs are already folded into cost (and into this number), so there is no separate Realized line in DIME view.'
+              ? 'Holding value − FIFO cost. Matches the DIME app\'s "Unrealized P/L".'
               : '(price − weighted-avg cost) × held qty. Strict mark-to-market on shares you still hold.'}
           />
           {hasRealized && !isDimeView && (

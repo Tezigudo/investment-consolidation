@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeAvgFromTrades, aggregateTrades } from './cost-basis.js';
+import { computeAvgFromTrades, aggregateTrades, aggregateTradesFIFO } from './cost-basis.js';
 import type { TradeRow } from '@consolidate/shared';
 
 function trade(partial: Partial<TradeRow>): TradeRow {
@@ -144,5 +144,43 @@ describe('aggregateTrades — realized PNL', () => {
     expect(r.realizedTHB).toBeCloseTo(33300 - 26750, 6);      // +6550
     // fxLockedAvg = 26750 / 750 = 35.6667; FX contrib = 750 × (37 − 35.6667) = 1000
     expect(r.realizedFxContribTHB).toBeCloseTo(750 * (37 - 26750 / 750), 6);
+  });
+});
+
+describe('aggregateTradesFIFO', () => {
+  it('SELL eats oldest lots first; surviving lot keeps its cost', () => {
+    // BUY1 10 @ $10, BUY2 10 @ $20, SELL 12 @ $30 → FIFO eats all of BUY1
+    // and 2 shares of BUY2. Held: 8 shares of BUY2 @ $20 → fifoCost=$160.
+    // Standard weighted-avg would say cost=$120 (8×$15) — different.
+    const r = aggregateTradesFIFO([
+      trade({ side: 'BUY', qty: 10, price_usd: 10, fx_at_trade: 35 }),
+      trade({ side: 'BUY', qty: 10, price_usd: 20, fx_at_trade: 36 }),
+      trade({ side: 'SELL', qty: 12, price_usd: 30, fx_at_trade: 37 }),
+    ]);
+    expect(r.qty).toBeCloseTo(8, 6);
+    expect(r.fifoCostUSD).toBeCloseTo(160, 6);
+    expect(r.fifoCostTHB).toBeCloseTo(160 * 36, 6);
+  });
+
+  it('post-SELL BUY is appended to the FIFO queue, not consumed by past SELLs', () => {
+    // BUY 5 @ $100, SELL 5 @ $200, BUY 5 @ $300.
+    // FIFO: SELL eats the BUY @ $100 entirely → 0 held. Then BUY @ $300
+    // adds a fresh lot of 5. Held: 5 @ $300 → fifoCost=$1500.
+    const r = aggregateTradesFIFO([
+      trade({ side: 'BUY', qty: 5, price_usd: 100 }),
+      trade({ side: 'SELL', qty: 5, price_usd: 200 }),
+      trade({ side: 'BUY', qty: 5, price_usd: 300 }),
+    ]);
+    expect(r.qty).toBeCloseTo(5, 6);
+    expect(r.fifoCostUSD).toBeCloseTo(1500, 6);
+  });
+
+  it('BUY commission rolls into the lot cost-per-share', () => {
+    // BUY 10 @ $100 + $5 commission → lot cost-per-share = $100.50.
+    const r = aggregateTradesFIFO([
+      trade({ side: 'BUY', qty: 10, price_usd: 100, commission: 5 }),
+    ]);
+    expect(r.qty).toBe(10);
+    expect(r.fifoCostUSD).toBeCloseTo(1005, 6);
   });
 });

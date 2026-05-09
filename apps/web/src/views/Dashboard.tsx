@@ -343,7 +343,7 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
                         body={
                           costView === 'standard'
                             ? `Standard avg cost: take what you originally paid for the shares you still hold and divide by qty.\n\n• A SELL banks the gain or loss as "realized PNL" and removes the cost of just the sold shares — so the avg cost per remaining share doesn't change.\n• Result: this number tells you what each share you still hold cost you on the books.\n\nFormula: remaining cost basis ÷ qty held`
-                            : `DIME-style avg cost: take all the cash you've put in (BUY total) minus all the cash you've taken out (SELL total), divided by qty you still hold.\n\n• A profitable SELL makes this number go DOWN (you got more cash back than the per-share cost).\n• A loss-taking SELL makes this number go UP (you got less cash back, so your "net out-of-pocket per share" is now higher).\n\nThis matches the "Cost per Share" the DIME app shows.\n\nFormula: (BUY total cash − SELL total cash) ÷ qty held`
+                            : `DIME-style avg cost: FIFO. A SELL eats the oldest open lots first; the surviving lots' cost is what you see here.\n\n• If your old buys were cheap and you sold most of them, the avg moves UP toward the cost of the newer (held) lots.\n• If your recent buys are cheap and you only sold older expensive ones, the avg moves DOWN.\n\nThis matches the "Cost per Share" the DIME app shows.\n\nFormula: Σ (remaining_lot_qty × lot_cost_per_share) ÷ qty held`
                         }
                       />
                     </span>
@@ -358,18 +358,20 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
               <tbody>
                 {filtered.map((p) => {
                   const v = currency === 'THB' ? p.marketTHB : p.marketUSD;
-                  // DIME view: fold realized PNL back into PNL and back-out avg cost
-                  // from net cash invested per share. Standard view: weighted-average.
+                  // DIME view: FIFO cost basis (matches the DIME app exactly).
+                  // Standard view: weighted-average cost-basis preservation.
                   const isDimeView = costView === 'dime';
-                  const realized = currency === 'THB' ? p.realizedTHB : p.realizedUSD;
-                  const pnl = (currency === 'THB' ? p.pnlTHB : p.pnlUSD) + (isDimeView ? realized : 0);
-                  const dimeCostUSD = p.qty > 0 ? p.costUSD - p.realizedUSD : 0;
-                  const dimeAvgUSD = p.qty > 0 ? dimeCostUSD / p.qty : p.avgUSD;
+                  const dimeAvgUSD = p.qty > 0 ? p.fifoCostUSD / p.qty : p.avgUSD;
                   const avgShown = isDimeView ? dimeAvgUSD : p.avgUSD;
+                  const dimePnlUSD = p.marketUSD - p.fifoCostUSD;
+                  const dimePnlTHB = p.marketTHB - p.fifoCostTHB;
+                  const pnl = isDimeView
+                    ? currency === 'THB' ? dimePnlTHB : dimePnlUSD
+                    : currency === 'THB' ? p.pnlTHB : p.pnlUSD;
                   const pnlPctShown = isDimeView
-                    ? dimeCostUSD > 0
-                      ? (((currency === 'THB' ? p.pnlTHB + realized : p.pnlUSD + realized)) /
-                          (currency === 'THB' ? p.costTHB - p.realizedTHB : dimeCostUSD)) *
+                    ? p.fifoCostUSD > 0
+                      ? ((currency === 'THB' ? dimePnlTHB : dimePnlUSD) /
+                          (currency === 'THB' ? p.fifoCostTHB : p.fifoCostUSD)) *
                         100
                       : 0
                     : p.pnlPct;

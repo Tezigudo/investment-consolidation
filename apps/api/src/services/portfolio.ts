@@ -2,7 +2,7 @@ import { pool } from '../db/client.js';
 import { fetchBinancePositions } from './binance.js';
 import { refreshPrices, getCachedPrices } from './prices.js';
 import { getUSDTHB } from './fx.js';
-import { aggregateTrades } from './cost-basis.js';
+import { aggregateTrades, aggregateTradesFIFO } from './cost-basis.js';
 import type { PositionRow, TradeRow } from '../db/types.js';
 import type {
   Platform,
@@ -65,6 +65,8 @@ function enrich(row: {
   meta?: { name?: string; sector?: string } | null;
   realizedUSD?: number;
   realizedTHB?: number;
+  fifoCostUSD?: number;
+  fifoCostTHB?: number;
 }): EnrichedPosition {
   const { qty, avgUSD, priceUSD, costTHB, marketFX } = row;
   const marketUSD = qty * priceUSD;
@@ -96,6 +98,8 @@ function enrich(row: {
     fxContribTHB,
     realizedUSD: row.realizedUSD ?? 0,
     realizedTHB: row.realizedTHB ?? 0,
+    fifoCostUSD: row.fifoCostUSD ?? costUSD,
+    fifoCostTHB: row.fifoCostTHB ?? costTHB,
   };
 }
 
@@ -253,6 +257,8 @@ function buildDimeCashRow(
     fxContribTHB: 0,
     realizedUSD: 0,
     realizedTHB: 0,
+    fifoCostUSD: usd,
+    fifoCostTHB: marketTHB,
   };
 }
 
@@ -270,12 +276,13 @@ async function readDimePositions(
   const priceMap = await getCachedPrices(activeSymbols);
 
   const out: EnrichedPosition[] = [];
-  for (const [symbol] of tradeMap) {
+  for (const [symbol, trades] of tradeMap) {
     const agg = aggs.get(symbol)!
     if (agg.qty <= 0) continue;
     const cached = priceMap.get(symbol);
     const priceUSD = cached?.price_usd ?? agg.avgUSD;
     const meta = STOCK_META[symbol];
+    const fifo = aggregateTradesFIFO(trades);
     const enriched = enrich({
       platform: 'DIME',
       symbol,
@@ -287,6 +294,8 @@ async function readDimePositions(
       meta,
       realizedUSD: agg.realizedUSD,
       realizedTHB: agg.realizedTHB,
+      fifoCostUSD: fifo.fifoCostUSD,
+      fifoCostTHB: fifo.fifoCostTHB,
     });
     await upsertPosition(enriched);
     out.push(enriched);
@@ -383,6 +392,8 @@ export async function buildBankPositions(): Promise<EnrichedPosition[]> {
     fxContribTHB: 0,
     realizedUSD: 0,
     realizedTHB: 0,
+    fifoCostUSD: r.amount_usd,
+    fifoCostTHB: r.amount_thb,
   }));
 }
 

@@ -87,3 +87,46 @@ export function computeAvgFromTrades(
   const a = aggregateTrades(trades);
   return { qty: a.qty, avgUSD: a.avgUSD, costTHB: a.costTHB };
 }
+
+// FIFO cost basis of currently-held shares — matches what the DIME app
+// reports as "Total cost" / "Cost per Share". A SELL eats the oldest
+// open lots first; what survives is the cost basis of the remaining qty.
+// Differs from aggregateTrades() which uses weighted-average preservation.
+export function aggregateTradesFIFO(
+  trades: TradeRow[],
+): { qty: number; fifoCostUSD: number; fifoCostTHB: number } {
+  interface Lot { qty: number; costPerShareUSD: number; costPerShareTHB: number }
+  const lots: Lot[] = [];
+  for (const t of trades) {
+    if (t.side === 'BUY') {
+      if (t.qty <= 0) continue;
+      const grossUSD = t.qty * t.price_usd + (t.commission ?? 0);
+      lots.push({
+        qty: t.qty,
+        costPerShareUSD: grossUSD / t.qty,
+        costPerShareTHB: (grossUSD * t.fx_at_trade) / t.qty,
+      });
+    } else if (t.side === 'SELL') {
+      let remaining = t.qty;
+      while (remaining > 1e-12 && lots.length > 0) {
+        const lot = lots[0];
+        if (lot.qty <= remaining + 1e-12) {
+          remaining -= lot.qty;
+          lots.shift();
+        } else {
+          lot.qty -= remaining;
+          remaining = 0;
+        }
+      }
+    }
+  }
+  let qty = 0;
+  let fifoCostUSD = 0;
+  let fifoCostTHB = 0;
+  for (const lot of lots) {
+    qty += lot.qty;
+    fifoCostUSD += lot.qty * lot.costPerShareUSD;
+    fifoCostTHB += lot.qty * lot.costPerShareTHB;
+  }
+  return { qty, fifoCostUSD, fifoCostTHB };
+}

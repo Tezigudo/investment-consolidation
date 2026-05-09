@@ -23,9 +23,8 @@ type SortValue = 'market' | 'pnl' | 'pnlPct' | 'symbol';
 
 function dimeAvgUSD(p: EnrichedPosition): number {
   if (p.qty <= 0) return p.avgUSD;
-  // Net-cash-invested per share — same identity as web Dashboard:
-  //   dimeAvg = (costUSD - realizedUSD) / qty
-  return (p.costUSD - p.realizedUSD) / p.qty;
+  // FIFO cost-per-share — matches the DIME app's "Cost per Share".
+  return p.fifoCostUSD / p.qty;
 }
 
 // % over original net cash invested. Stays sane after partial sells.

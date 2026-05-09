@@ -8,6 +8,7 @@ interface Props {
   position: EnrichedPosition & { plat?: Platform };
   currency: Currency;
   usdthb: number;
+  costView: 'standard' | 'dime';
   onClose: () => void;
 }
 
@@ -35,7 +36,7 @@ function isSpotTrade(t: TradeRow): boolean {
   return true;
 }
 
-export function PriceModal({ position, currency, usdthb, onClose }: Props) {
+export function PriceModal({ position, currency, usdthb, costView, onClose }: Props) {
   const [range, setRange] = useState<Range>('6M');
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [hoverTrade, setHoverTrade] = useState<TradeRow | null>(null);
@@ -87,6 +88,20 @@ export function PriceModal({ position, currency, usdthb, onClose }: Props) {
   const realizedUSD = data?.realizedUSD ?? 0;
   const realizedTHB = data?.realizedTHB ?? 0;
   const hasRealized = Math.abs(realizedUSD) >= 0.005;
+
+  // DIME-style cost: total cash put in minus total cash taken out, divided
+  // by qty held. Folds realized PNL back into cost so the unrealized number
+  // matches what the DIME app shows. Standard view leaves cost basis
+  // weighted-average-preserved and surfaces realized as its own stat.
+  const isDimeView = costView === 'dime';
+  const dimeCostUSD = position.qty > 0 ? position.costUSD - realizedUSD : 0;
+  const dimeCostTHB = position.qty > 0 ? position.costTHB - realizedTHB : 0;
+  const dimeAvgUSD = position.qty > 0 ? dimeCostUSD / position.qty : position.avgUSD;
+  const avgShown = isDimeView ? dimeAvgUSD : position.avgUSD;
+  const unrealizedUSDShown = isDimeView ? holdingUSD - dimeCostUSD : position.pnlUSD;
+  const unrealizedTHBShown = isDimeView
+    ? position.qty * last * usdthb - dimeCostTHB
+    : position.pnlTHB;
   const earned = data?.earned ?? { qty: 0, valueUSD: 0, valueTHB: 0, count: 0, firstTs: 0, lastTs: 0 };
   const hasEarned = earned.count > 0;
   const earnedNowUSD = earned.qty * last; // current mark-to-market value of accrued rewards
@@ -268,15 +283,24 @@ export function PriceModal({ position, currency, usdthb, onClose }: Props) {
             value={`${dayChange >= 0 ? '+' : '−'}${fmt(Math.abs(dayChange))} (${fmtPct(dayChangePct)})`}
             color={dayChange >= 0 ? 'var(--up)' : 'var(--down)'}
           />
-          <Stat label="Your avg" value={fmt(position.avgUSD)} muted />
+          <Stat
+            label={isDimeView ? 'Your avg (DIME)' : 'Your avg'}
+            value={fmt(avgShown)}
+            muted
+            tooltip={isDimeView
+              ? 'DIME-style: (BUY total cash − SELL total cash) ÷ qty held. Matches the "Cost per Share" the DIME app shows.'
+              : undefined}
+          />
           <Stat label="Holding value" value={fmt(holdingUSD)} />
           <Stat
             label="Unrealized PNL"
-            value={currency === 'THB' ? fmtTHB(position.pnlTHB, { sign: true }) : fmtUSD(position.pnlUSD, { sign: true })}
-            color={position.pnlPct >= 0 ? 'var(--up)' : 'var(--down)'}
-            tooltip="(price − weighted-avg cost) × held qty. Strict mark-to-market on shares you still hold."
+            value={currency === 'THB' ? fmtTHB(unrealizedTHBShown, { sign: true }) : fmtUSD(unrealizedUSDShown, { sign: true })}
+            color={unrealizedUSDShown >= 0 ? 'var(--up)' : 'var(--down)'}
+            tooltip={isDimeView
+              ? 'Holding value − net cash invested. Realized gains from past SELLs are already folded into cost (and into this number), so there is no separate Realized line in DIME view.'
+              : '(price − weighted-avg cost) × held qty. Strict mark-to-market on shares you still hold.'}
           />
-          {hasRealized && (
+          {hasRealized && !isDimeView && (
             <Stat
               label="Realized PNL"
               value={currency === 'THB' ? fmtTHB(realizedTHB, { sign: true }) : fmtUSD(realizedUSD, { sign: true })}
@@ -284,7 +308,7 @@ export function PriceModal({ position, currency, usdthb, onClose }: Props) {
               tooltip="Banked from past SELLs. Each SELL realizes (sell_price − then-avg) × sell_qty; avg per share is preserved."
             />
           )}
-          {hasRealized && (
+          {hasRealized && !isDimeView && (
             <Stat
               label="Net PNL"
               value={

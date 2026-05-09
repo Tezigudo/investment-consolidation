@@ -433,7 +433,7 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
         </div>
       </div>
 
-      {selected && <PriceModal position={selected} currency={currency} usdthb={usdthb} onClose={() => setSelected(null)} />}
+      {selected && <PriceModal position={selected} currency={currency} usdthb={usdthb} costView={costView} onClose={() => setSelected(null)} />}
     </>
   );
 }

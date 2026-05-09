@@ -46,12 +46,6 @@ export async function getPriceUSDTForTs(asset: string, ts: number): Promise<numb
   return price;
 }
 
-// ── Daily-window cache warm ─────────────────────────────────────────
-// Pre-populates `prices_daily` for the rolling chart window so the
-// /symbols/:sym/history endpoint hits a warm cache (~600ms instead of
-// the cold ~15s for a 180-day Binance kline backfill). Called from the
-// scheduler nightly + as part of server warm-up.
-
 async function fetchCryptoDailyWindow(asset: string, fromDay: number, toDay: number): Promise<{ day: number; price: number }[]> {
   try {
     const rows = await binancePublicGet<unknown[][]>('/api/v3/klines', {
@@ -112,11 +106,6 @@ async function writeDailyWindow(
   );
 }
 
-// Ensures `prices_daily` covers the [today-days+1, today] window for one
-// symbol. Skips upstream calls when the cache is already warm and the
-// freshest point is recent — same heuristic as the chart endpoint, just
-// without materializing the series afterward. Returns `true` if it
-// fetched fresh data, `false` if the cache was already warm.
 export async function warmDailyHistory(symbol: string, kind: 'stock' | 'crypto', days: number): Promise<boolean> {
   const today = todayDayStart();
   const fromDay = today - (days - 1) * ONE_DAY;
@@ -144,9 +133,7 @@ export async function warmDailyHistory(symbol: string, kind: 'stock' | 'crypto',
   return true;
 }
 
-// Bulk warm — runs each symbol sequentially to avoid hammering the same
-// upstream (Binance shares one rate-limit bucket across all crypto
-// klines calls; Yahoo will 429 on parallel hits per IP).
+// Sequential — Binance and Yahoo will 429 on parallel hits per IP.
 export async function warmDailyHistoryBatch(
   entries: { symbol: string; kind: 'stock' | 'crypto' }[],
   days: number,

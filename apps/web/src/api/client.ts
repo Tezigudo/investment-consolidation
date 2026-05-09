@@ -35,13 +35,8 @@ export interface DimeMailResult {
   debugDir: string;
 }
 
-// Resolution order:
-//   1. localStorage override (Settings → Server URL) — lets user retarget
-//      a deployed web build at a different API without a redeploy.
-//   2. VITE_API_URL baked at build time (Cloudflare Pages env var).
-//   3. PROD_DEFAULT — the prod Fly URL, used when the bundle is opened
-//      from any host other than localhost / vite dev.
-//   4. /api fallback — Vite dev server proxies this to :4000.
+// Resolution order: stored override → VITE_API_URL → PROD_DEFAULT
+// (non-localhost) → '/api' (vite dev proxy).
 const ENV_BASE = import.meta.env.VITE_API_URL as string | undefined;
 const PROD_DEFAULT = 'https://investment-consolidation.fly.dev';
 const TOKEN_KEY = 'consolidate.apiToken';
@@ -72,6 +67,23 @@ export function setApiUrl(url: string) {
 }
 export function setApiToken(token: string) {
   localStorage.setItem(TOKEN_KEY, token.trim());
+}
+export function clearApiUrl() {
+  localStorage.removeItem(URL_KEY);
+}
+export function clearApiToken() {
+  localStorage.removeItem(TOKEN_KEY);
+}
+// Stored override only (empty when unset) — distinct from the resolved
+// value so the Settings input shows "what I actually saved", not the
+// fallback chain's current pick.
+export function getStoredApiUrl(): string {
+  if (typeof window === 'undefined') return '';
+  return localStorage.getItem(URL_KEY) || '';
+}
+export function getStoredApiToken(): string {
+  if (typeof window === 'undefined') return '';
+  return localStorage.getItem(TOKEN_KEY) || '';
 }
 export function getApiUrl(): string {
   return readBase();

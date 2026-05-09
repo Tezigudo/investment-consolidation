@@ -251,34 +251,27 @@ export async function symbolRoutes(app: FastifyInstance) {
 
     const todayUSD = await getPrice(sym, kind);
 
-    // Fold on-chain vault yield into the same earned bucket so a single
-    // "Total earned" stat covers Binance Earn + on-chain. Marked-to-
-    // market at today's price (we don't track per-second yield events,
-    // only the cumulative delta vs. net deposits).
     const onchain = await readOnchainEarnForSymbol(sym);
-    if (onchain && onchain.qty > 0 && todayUSD > 0) {
-      const fx = await getUSDTHB();
+    if (onchain && onchain.qty > 0) {
+      const fx = todayUSD > 0 ? await getUSDTHB() : null;
       const valueUSD = onchain.qty * todayUSD;
       earned.qty += onchain.qty;
       earned.valueUSD += valueUSD;
-      earned.valueTHB += valueUSD * fx.rate;
+      earned.valueTHB += fx ? valueUSD * fx.rate : 0;
       earned.count += onchain.vaultCount;
     }
 
-    // Airdrop is reported as its own block — semantically different from
-    // "earned" (yield) and shouldn't pollute that aggregate. Marked at
-    // today's price, same as on-chain vault yield.
     const airdropAgg = await readOnchainAirdropForSymbol(sym);
     let airdrop:
       | { qty: number; valueUSD: number; valueTHB: number; count: number; sources: number; firstTs: number; lastTs: number }
       | null = null;
-    if (airdropAgg && airdropAgg.qty > 0 && todayUSD > 0) {
-      const fx = await getUSDTHB();
+    if (airdropAgg && airdropAgg.qty > 0) {
+      const fx = todayUSD > 0 ? await getUSDTHB() : null;
       const valueUSD = airdropAgg.qty * todayUSD;
       airdrop = {
         qty: airdropAgg.qty,
         valueUSD,
-        valueTHB: valueUSD * fx.rate,
+        valueTHB: fx ? valueUSD * fx.rate : 0,
         count: airdropAgg.count,
         sources: airdropAgg.sources,
         firstTs: airdropAgg.firstTs,

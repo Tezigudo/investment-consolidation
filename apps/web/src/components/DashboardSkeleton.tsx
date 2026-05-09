@@ -1,7 +1,3 @@
-// Replaces the black "API error" / "Loading…" screens with a layout
-// that mirrors the real dashboard. Keeps the user oriented (they see
-// where data WILL appear) while either the network or auth resolves.
-
 const SHIMMER = {
   background: 'linear-gradient(90deg, var(--surface) 0%, var(--surface-2) 50%, var(--surface) 100%)',
   backgroundSize: '200% 100%',

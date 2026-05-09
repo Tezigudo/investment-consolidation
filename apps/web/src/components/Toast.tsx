@@ -1,7 +1,3 @@
-// Top-right slide-in notification. Used for transient API errors so
-// the user gets a clear signal without losing their place in the UI.
-// Three tones: 'error' (red), 'warn' (amber), 'info' (neutral).
-
 interface Props {
   tone?: 'error' | 'warn' | 'info';
   title?: string;

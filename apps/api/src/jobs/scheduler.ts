@@ -83,10 +83,7 @@ export function startJobs() {
   if (started) return;
   started = true;
 
-  // Fire-and-forget warm-up so the first dashboard load isn't empty.
   void warmOnce();
-  // And one chart-cache warm so the first modal open after a deploy is
-  // fast even if the user hasn't touched a chart in days.
   void warmDailyChartCache();
 
   // Incremental Binance history sync on server start (if already seeded).
@@ -144,10 +141,6 @@ export function startJobs() {
     }
   });
 
-  // Chart cache once a day at 02:30 UTC (~09:30 Bangkok) — the warm
-  // function skips symbols that are already current, so this is mostly
-  // cheap on the steady state and only does real work after a long
-  // weekend or when a new symbol shows up.
   cron.schedule('30 2 * * *', () => {
     void warmDailyChartCache();
   });

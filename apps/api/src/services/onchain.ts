@@ -4,16 +4,10 @@ import { config } from '../config.js';
 import { pool } from '../db/client.js';
 import { getUSDTHB } from './fx.js';
 
-// Public Alchemy World Chain RPC caps eth_getLogs at 10k blocks UNLESS
-// the response size stays under a separate limit; with the wallet topic
-// filter the response per chunk is ~kB so wider chunks succeed. 1M
-// blocks/chunk lets the first-ever scan of World Chain head (~29M
-// blocks) finish in ~30 chunks instead of ~3000. Subsequent ticks scan
-// only the ~150 new blocks since last_scanned_block.
+// Public Alchemy caps eth_getLogs at 10k blocks unless responses are
+// small; the wallet/source topic filter shrinks them enough to push 1M.
 const LOG_CHUNK_BLOCKS = 1_000_000n;
 
-// World Chain mainnet (chain id 480). Defined inline so we don't pull in
-// the full viem/chains catalog for one chain.
 const worldChain = defineChain({
   id: 480,
   name: 'World Chain',
@@ -21,19 +15,12 @@ const worldChain = defineChain({
   rpcUrls: { default: { http: [config.ONCHAIN_WLD_RPC] } },
 });
 
-// ERC-4626 vault interface (Re7WLD on Morpho is one). Reading
-// `convertToAssets(shares)` turns vault shares back into the underlying
-// WLD amount the user could redeem right now (i.e. principal + accrued
-// yield).
 const erc4626Abi = parseAbi([
   'function convertToAssets(uint256 shares) view returns (uint256)',
   'function asset() view returns (address)',
   'function decimals() view returns (uint8)',
 ]);
 
-// ERC-4626 standard events. We filter by `owner` (indexed) so the
-// node-side response is just our wallet's activity — keeps each
-// 10k-block chunk under the response-size cap on public Alchemy.
 const erc4626DepositEvent = parseAbiItem(
   'event Deposit(address indexed sender, address indexed owner, uint256 assets, uint256 shares)',
 );
@@ -41,21 +28,12 @@ const erc4626WithdrawEvent = parseAbiItem(
   'event Withdraw(address indexed sender, address indexed receiver, address indexed owner, uint256 assets, uint256 shares)',
 );
 
-// Standard ERC-20 Transfer event — used to detect airdrop drops sent
-// to the wallet from a known distributor contract. Filtering by both
-// `from` (indexed) and `to` (indexed) keeps the response per chunk
-// trivially small.
 const erc20TransferEvent = parseAbiItem(
   'event Transfer(address indexed from, address indexed to, uint256 value)',
 );
 
-// Scale a raw bigint token amount to a JS number safely. WLD balances
-// are well under Number.MAX_SAFE_INTEGER (2^53-1 ≈ 9e15) when expressed
-// in whole tokens, so dividing a bigint by BigInt(scale) in integer
-// space before converting avoids precision/overflow issues with tokens
-// that have 18 decimals.
 function toTokenQty(raw: bigint, decimals: number): number {
-  const scale = 10n ** BigInt(decimals); // avoid Number precision issues at 18 decimals
+  const scale = 10n ** BigInt(decimals);
   const whole = raw / scale;
   const frac = Number(raw % scale) / Number(scale);
   return Number(whole) + frac;
@@ -66,12 +44,8 @@ export interface OnChainWLDSnapshot {
   totalQty: number;
   walletQty: number;
   vaults: { address: string; assetsQty: number; sharesRaw: bigint }[];
-  // Cumulative vault yield in WLD across all vaults: sum over vaults of
-  // (current redeemable assets) − (net assets the user deposited).
-  // Caveat: this assumes shares were never transferred between wallets.
-  // If you ever move vault shares to/from a different EOA, the math
-  // reads the transfer as free yield (or a loss) — we have no way to
-  // distinguish it from an actual gain on chain.
+  // Wrong if vault shares were transferred between wallets — the
+  // transfer reads as free yield/loss with no on-chain way to tell.
   earnedQty: number;
 }
 
@@ -145,23 +119,9 @@ async function upsertVaultState(row: VaultStateRow): Promise<void> {
   );
 }
 
-// Walks Deposit + Withdraw events for the wallet across [fromBlock,
-// toBlock] in chunks. Returns the total assets deposited and withdrawn
-// in raw token units across all matching events. Public Alchemy chunk
-// cap is 10k blocks unless the response is small; with topic filters
-// the response stays tiny so we use a much larger chunk size.
-//
-// Filter choice:
-//   Deposit  → indexed `owner` == wallet. Morpho UI calls
-//              `vault.deposit(assets, owner=user)` so the user is the
-//              owner of newly-minted shares regardless of who the
-//              calling bundler is.
-//   Withdraw → indexed `receiver` == wallet. Morpho UI pulls the user's
-//              shares to the bundler first (via approval), then calls
-//              `vault.redeem(shares, receiver=user, owner=bundler)`.
-//              Filtering by `owner` would miss ~95% of withdrawals (the
-//              bundler owns the shares at burn time). `receiver` is
-//              where the assets actually flow, which is what we want.
+// Withdraw filter: Morpho's bundler owns the shares at burn time and
+// only `receiver` reliably matches the user's wallet — owner-filter
+// misses ~95% of withdrawals.
 async function walkVaultEvents(
   client: PublicClient,
   vault: Address,
@@ -197,9 +157,6 @@ async function walkVaultEvents(
   return { depositedRaw, withdrawnRaw };
 }
 
-// Total earned WLD on-chain right now (sum of vault yields).
-// Reads only the cached state table — no RPC calls — so the chart
-// endpoint can include this in its earned aggregate cheaply.
 export async function readOnchainEarnForSymbol(
   symbol: string,
 ): Promise<{ qty: number; vaultCount: number } | null> {
@@ -220,25 +177,15 @@ export async function readOnchainEarnForSymbol(
     const deposits = BigInt(r.total_deposits_raw);
     const withdrawals = BigInt(r.total_withdrawals_raw);
     const current = BigInt(r.current_assets_raw);
-    // Lifetime yield = (assets out via withdraws + assets still held)
-    // − assets deposited. Captures yield that's already been harvested
-    // AND yield still sitting in the vault. Reduces to (current − deposits)
-    // when the user has never withdrawn.
+    // Lifetime yield = (withdrawn + still held) − deposited; clamp at
+    // zero so vault losses don't show as negative "earnings".
     const totalOut = withdrawals + current;
-    // Clamp at zero — vault losses (rare but possible) shouldn't show
-    // as negative "earnings" in the dashboard. The position's PNL math
-    // already reflects the real loss separately.
     const yieldRaw = totalOut > deposits ? totalOut - deposits : 0n;
     earnedQty += toTokenQty(yieldRaw, r.decimals);
     vaultCount += 1;
   }
   return { qty: earnedQty, vaultCount };
 }
-
-// ── Airdrop tracking ──────────────────────────────────────────────
-// Distinct from vault yield: counts WLD inflows from designated
-// distributor contracts (Worldcoin grant, etc.). Keeps the user's
-// "free WLD received" metric separate from share-price appreciation.
 
 interface AirdropStateRow {
   symbol: string;
@@ -315,11 +262,6 @@ async function upsertAirdropState(row: AirdropStateRow): Promise<void> {
   );
 }
 
-// Walks ERC-20 Transfer(from=source, to=wallet) events on the given
-// token. Returns sum of value, event count, and first/last block
-// timestamps observed. Block timestamps require a separate getBlock
-// call per chunk's first/last log — kept lazy (only fetched when there
-// are events) to avoid per-tick cost when nothing happened.
 async function walkAirdropEvents(
   client: PublicClient,
   token: Address,
@@ -351,8 +293,6 @@ async function walkAirdropEvents(
     }
     cursor = chunkEnd + 1n;
   }
-  // Resolve first/last timestamps if we saw any events. One getBlock
-  // each — cheap. Skipped entirely on empty chunks.
   let firstTs = 0;
   let lastTs = 0;
   if (count > 0) {
@@ -368,8 +308,6 @@ async function walkAirdropEvents(
   return { receivedRaw, count, firstTs, lastTs };
 }
 
-// Refresh all configured airdrop sources for a single (wallet, token).
-// Incremental from each source's last_scanned_block.
 async function refreshAirdrops(
   client: PublicClient,
   token: Address,
@@ -411,9 +349,6 @@ async function refreshAirdrops(
   }
 }
 
-// Read aggregated airdrop state for a symbol (sums across all
-// configured sources for the wallet). No RPC — pure DB read for use by
-// the chart endpoint.
 export async function readOnchainAirdropForSymbol(
   symbol: string,
 ): Promise<{ qty: number; count: number; firstTs: number; lastTs: number; sources: number } | null> {
@@ -454,8 +389,6 @@ export async function readWLDPosition(): Promise<OnChainWLDSnapshot> {
   const client = createPublicClient({ chain: worldChain, transport: http() }) as PublicClient;
   const latestBlock = await client.getBlockNumber();
 
-  // WLD is 18 decimals like ether — fetch dynamically anyway in case the
-  // user points the env at a different token by mistake.
   const decimals = (await client.readContract({
     address: wld,
     abi: erc20Abi,
@@ -474,9 +407,8 @@ export async function readWLDPosition(): Promise<OnChainWLDSnapshot> {
   for (const vaultAddrStr of config.ONCHAIN_WLD_VAULTS) {
     const vault = getAddress(vaultAddrStr);
     try {
-      // Sanity: confirm the vault's underlying asset is WLD. Skip silently
-      // if mis-configured — we don't want a typo to dump random tokens
-      // into the WLD bag.
+      // Skip vaults whose underlying isn't WLD so a typo can't dump
+      // random tokens into the WLD bag.
       const underlying = (await client.readContract({
         address: vault,
         abi: erc4626Abi,
@@ -495,22 +427,22 @@ export async function readWLDPosition(): Promise<OnChainWLDSnapshot> {
         functionName: 'balanceOf',
         args: [wallet],
       })) as bigint;
-      if (shares === 0n) {
-        vaults.push({ address: vault, assetsQty: 0, sharesRaw: 0n });
-        continue;
-      }
-      const assetsRaw = (await client.readContract({
+      const assetsRaw = shares === 0n
+        ? 0n
+        : ((await client.readContract({
+            address: vault,
+            abi: erc4626Abi,
+            functionName: 'convertToAssets',
+            args: [shares],
+          })) as bigint);
+      vaults.push({
         address: vault,
-        abi: erc4626Abi,
-        functionName: 'convertToAssets',
-        args: [shares],
-      })) as bigint;
-      vaults.push({ address: vault, assetsQty: toTokenQty(assetsRaw, decimals), sharesRaw: shares });
+        assetsQty: toTokenQty(assetsRaw, decimals),
+        sharesRaw: shares,
+      });
 
-      // Incremental event walk: from one past last_scanned_block to
-      // current head. First-ever run starts at block 0 (slow, ~30k
-      // chunks of 10k blocks for World Chain head). Subsequent runs
-      // are tiny because head moves by ~1 block per second.
+      // Walk every tick — even when shares==0 — to keep withdrawals
+      // and current_assets in sync with the lifetime-yield formula.
       const prev = await readVaultState(wallet, vault);
       const fromBlock = prev ? prev.lastScannedBlock + 1n : 0n;
       let depositedRaw = prev?.totalDepositsRaw ?? 0n;
@@ -535,9 +467,6 @@ export async function readWLDPosition(): Promise<OnChainWLDSnapshot> {
     }
   }
 
-  // Refresh airdrop state for any configured distributor contracts.
-  // Independent of vault state — the user might have airdrops without
-  // a vault, or a vault without airdrops.
   if (config.ONCHAIN_WLD_AIRDROP_SOURCES.length > 0) {
     try {
       await refreshAirdrops(client, wld, wallet, decimals, 'WLD', latestBlock);
@@ -546,7 +475,6 @@ export async function readWLDPosition(): Promise<OnChainWLDSnapshot> {
     }
   }
 
-  // Roll up cumulative on-chain yield using the now-current state rows.
   const earned = await readOnchainEarnForSymbol('WLD');
   const earnedQty = earned?.qty ?? 0;
 
@@ -554,18 +482,13 @@ export async function readWLDPosition(): Promise<OnChainWLDSnapshot> {
   return { totalQty, walletQty, vaults, earnedQty };
 }
 
-// Persist the aggregated WLD position into `positions` so the hot-path
-// portfolio aggregator picks it up the same way Binance positions do.
-// Cost basis is whatever the user set in env (default $0 — airdrop).
 export async function refreshOnChainWLD(): Promise<OnChainWLDSnapshot> {
   const snap = await readWLDPosition();
   if (!config.onchainEnabled) return snap;
 
   if (snap.totalQty <= 0 && snap.earnedQty <= 0) {
-    // No WLD held AND no historical yield to show — clear any stale row
-    // to avoid showing 0-qty zombies. Keep the position row alive while
-    // there's earned yield so the chart's "Total earned" stat survives
-    // a temporary withdraw → redeposit cycle.
+    // Keep the row alive while there's earned yield so the chart's
+    // "Total earned" stat survives a withdraw → redeposit cycle.
     await pool.query(
       "DELETE FROM positions WHERE platform = 'OnChain' AND symbol = 'WLD'",
     );
@@ -590,11 +513,8 @@ export async function refreshOnChainWLD(): Promise<OnChainWLDSnapshot> {
     [snap.totalQty, avgUSD, costTHB, Date.now()],
   );
 
-  // One-shot cleanup: an early version of the chart wired OnChain →
-  // 'stock', which made the modal fetch WLD from Yahoo (junk data for a
-  // non-stock ticker). Purge any such rows so the next chart open
-  // re-fetches WLD from Binance klines like other crypto. Idempotent —
-  // becomes a no-op once the bad data is gone.
+  // One-shot purge of pre-fix Yahoo-sourced WLD price rows; idempotent
+  // once cleared. Drop after a few weeks of clean prod runs.
   const purged = await pool.query(
     `DELETE FROM prices_daily WHERE asset = 'WLD' AND source = 'yahoo-chart'`,
   );

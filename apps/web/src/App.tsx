@@ -2,7 +2,15 @@ import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Dashboard } from './views/Dashboard';
 import { themeVars } from './lib/theme';
-import { getApiUrl, getApiToken, setApiUrl, setApiToken } from './api/client';
+import {
+  getApiUrl,
+  getStoredApiUrl,
+  getStoredApiToken,
+  setApiUrl,
+  setApiToken,
+  clearApiUrl,
+  clearApiToken,
+} from './api/client';
 import type { Currency } from '@consolidate/shared';
 
 const KEY = 'consolidate.prefs.v1';
@@ -29,8 +37,8 @@ export function App() {
   const [dark, setDark] = useState(init.dark);
   const [privacy, setPrivacy] = useState(init.privacy);
   const [tweaksOpen, setTweaksOpen] = useState(false);
-  const [apiUrlInput, setApiUrlInput] = useState(getApiUrl());
-  const [apiTokenInput, setApiTokenInput] = useState(getApiToken());
+  const [apiUrlInput, setApiUrlInput] = useState(getStoredApiUrl());
+  const [apiTokenInput, setApiTokenInput] = useState(getStoredApiToken());
   const [apiSavedMsg, setApiSavedMsg] = useState<string | null>(null);
   const qc = useQueryClient();
 
@@ -38,18 +46,18 @@ export function App() {
     localStorage.setItem(KEY, JSON.stringify({ currency, dark, privacy }));
   }, [currency, dark, privacy]);
 
-  // Reload current values whenever the panel opens — covers the case of
-  // another tab updating localStorage between opens.
   useEffect(() => {
     if (tweaksOpen) {
-      setApiUrlInput(getApiUrl());
-      setApiTokenInput(getApiToken());
+      setApiUrlInput(getStoredApiUrl());
+      setApiTokenInput(getStoredApiToken());
     }
   }, [tweaksOpen]);
 
   const saveApiSettings = () => {
-    if (apiUrlInput.trim()) setApiUrl(apiUrlInput);
-    if (apiTokenInput.trim()) setApiToken(apiTokenInput);
+    const url = apiUrlInput.trim();
+    const token = apiTokenInput.trim();
+    if (url) setApiUrl(url); else clearApiUrl();
+    if (token) setApiToken(token); else clearApiToken();
     setApiSavedMsg('Saved · refetching…');
     qc.invalidateQueries();
     setTimeout(() => setApiSavedMsg(null), 2000);
@@ -103,7 +111,7 @@ export function App() {
               type="url"
               value={apiUrlInput}
               onChange={(e) => setApiUrlInput(e.target.value)}
-              placeholder="https://investment-consolidation.fly.dev"
+              placeholder={getApiUrl()}
               spellCheck={false}
               style={{
                 width: '100%',

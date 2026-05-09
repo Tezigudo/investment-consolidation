@@ -53,10 +53,6 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
     return out;
   }, [currency, t?.costTHB, t?.costUSD, t?.marketTHB, t?.marketUSD]);
 
-  // Both error and loading states render the same skeleton + minimal
-  // header. Error additionally pops a top-right Toast — keeps the user
-  // oriented (sees where data will land) and points at the gear icon
-  // in the header so they know where to fix auth.
   if (error || isLoading || !snap || !t) {
     const errMsg = error ? (error as Error).message : null;
     const is401 = errMsg ? /\b401\b/.test(errMsg) : false;
@@ -571,10 +567,6 @@ function TxRow({ tx }: { tx: TradeRow }) {
   );
 }
 
-// Slim header used during loading/error. Settings (API URL + bearer
-// token) live in the bottom-right Tweaks panel rendered at App level,
-// so the user has one consistent place to configure things — no
-// duplicated gear here.
 function MinimalHeader() {
   return (
     <div

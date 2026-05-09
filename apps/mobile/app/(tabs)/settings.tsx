@@ -11,7 +11,15 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { api } from '@/api/client';
-import { getApiUrl, setApiUrl, getApiToken, setApiToken } from '@/api/baseUrl';
+import {
+  getApiUrl,
+  getStoredApiUrl,
+  setApiUrl,
+  clearApiUrl,
+  getStoredApiToken,
+  setApiToken,
+  clearApiToken,
+} from '@/api/baseUrl';
 import { Card } from '@/components/Card';
 import { SegmentedControl } from '@/components/SegmentedControl';
 import { useCostView } from '@/hooks/useCostView';
@@ -91,15 +99,17 @@ export default function SettingsScreen() {
   const [costView, setCostView] = useCostView();
   const [serverInput, setServerInput] = useState('');
   const [savedUrl, setSavedUrl] = useState('');
+  const [resolvedUrl, setResolvedUrl] = useState('');
   const [tokenInput, setTokenInput] = useState('');
   const [savedToken, setSavedToken] = useState('');
 
   useEffect(() => {
-    getApiUrl().then((u) => {
+    getStoredApiUrl().then((u) => {
       setSavedUrl(u);
       setServerInput(u);
     });
-    getApiToken().then((t) => {
+    getApiUrl().then(setResolvedUrl);
+    getStoredApiToken().then((t) => {
       setSavedToken(t);
       setTokenInput(t);
     });
@@ -140,15 +150,20 @@ export default function SettingsScreen() {
   };
 
   const saveServer = async () => {
-    await setApiUrl(serverInput);
-    setSavedUrl(serverInput);
+    const trimmed = serverInput.trim();
+    if (trimmed) await setApiUrl(trimmed);
+    else await clearApiUrl();
+    setSavedUrl(trimmed);
+    setResolvedUrl(await getApiUrl());
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     qc.invalidateQueries();
   };
 
   const saveToken = async () => {
-    await setApiToken(tokenInput);
-    setSavedToken(tokenInput);
+    const trimmed = tokenInput.trim();
+    if (trimmed) await setApiToken(trimmed);
+    else await clearApiToken();
+    setSavedToken(trimmed);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     qc.invalidateQueries();
   };
@@ -178,7 +193,7 @@ export default function SettingsScreen() {
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType="url"
-          placeholder="http://192.168.1.42:4000"
+          placeholder={resolvedUrl || 'http://192.168.1.42:4000'}
           placeholderTextColor={colors.textDim}
           style={{
             backgroundColor: colors.bgElevated,
@@ -195,25 +210,23 @@ export default function SettingsScreen() {
         <View style={{ flexDirection: 'row', gap: spacing.sm }}>
           <Pressable
             onPress={saveServer}
-            disabled={!serverInput.trim() || serverInput === savedUrl}
+            disabled={serverInput.trim() === savedUrl}
             style={{
               paddingHorizontal: spacing.md,
               paddingVertical: spacing.sm,
               backgroundColor:
-                !serverInput.trim() || serverInput === savedUrl
-                  ? colors.bgElevated
-                  : colors.accent,
+                serverInput.trim() === savedUrl ? colors.bgElevated : colors.accent,
               borderRadius: radius.md,
             }}
           >
             <Text
               style={{
                 ...typography.caption,
-                color: !serverInput.trim() || serverInput === savedUrl ? colors.textMuted : colors.bg,
+                color: serverInput.trim() === savedUrl ? colors.textMuted : colors.bg,
                 fontWeight: '600',
               }}
             >
-              Save
+              {serverInput.trim() ? 'Save' : 'Clear'}
             </Text>
           </Pressable>
         </View>
@@ -256,23 +269,23 @@ export default function SettingsScreen() {
         <View style={{ flexDirection: 'row', gap: spacing.sm }}>
           <Pressable
             onPress={saveToken}
-            disabled={tokenInput === savedToken}
+            disabled={tokenInput.trim() === savedToken}
             style={{
               paddingHorizontal: spacing.md,
               paddingVertical: spacing.sm,
               backgroundColor:
-                tokenInput === savedToken ? colors.bgElevated : colors.accent,
+                tokenInput.trim() === savedToken ? colors.bgElevated : colors.accent,
               borderRadius: radius.md,
             }}
           >
             <Text
               style={{
                 ...typography.caption,
-                color: tokenInput === savedToken ? colors.textMuted : colors.bg,
+                color: tokenInput.trim() === savedToken ? colors.textMuted : colors.bg,
                 fontWeight: '600',
               }}
             >
-              Save
+              {tokenInput.trim() ? 'Save' : 'Clear'}
             </Text>
           </Pressable>
         </View>

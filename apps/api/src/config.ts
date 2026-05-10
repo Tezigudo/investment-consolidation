@@ -69,6 +69,17 @@ const EnvSchema = z.object({
     .string()
     .default('0x3Ef3D8bA38EBe18DB133cEc108f4D14CE00Dd9Ae')
     .transform((s) => s.split(',').map((x) => x.trim()).filter(Boolean)),
+
+  // When set, the boot-time portfolio-snapshot backfill will also walk
+  // Yahoo + Binance to backfill prices_daily / fx_daily over the entire
+  // history window before computing snapshots. Off by default — the
+  // deep warm is heavy (multiple seconds of upstream calls + memory)
+  // and only needs to run once per fresh deploy. Trigger it on demand
+  // via `GET /portfolio/history?backfill=deep` after a deploy.
+  SNAPSHOT_DEEP_WARM: z
+    .string()
+    .default('')
+    .transform((s) => s === '1' || s.toLowerCase() === 'true'),
 });
 
 export type AppConfig = z.infer<typeof EnvSchema> & {

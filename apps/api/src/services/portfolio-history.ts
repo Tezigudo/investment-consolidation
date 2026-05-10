@@ -208,6 +208,14 @@ export async function captureSnapshotNow(): Promise<SnapshotRow> {
   return row;
 }
 
+// In-flight singleton: if two callers (e.g. boot sequence + a request
+// hitting /portfolio/history during boot) both ask for a backfill at the
+// same time, they share one execution instead of racing two parallel
+// price-warm + DB-write batches against Yahoo/Binance. The second caller
+// gets the same Promise back; cleared in `finally` so subsequent calls
+// (e.g. a forced `?backfill=deep` after deploy) start fresh.
+let inflightBackfill: Promise<{ inserted: number; updated: number; days: number }> | null = null;
+
 // Replay every UTC day from the earliest trade until today, computing
 // position state + market value at each day. Idempotent (UPSERT). Returns
 // counts so callers can report what changed.
@@ -217,8 +225,19 @@ export async function captureSnapshotNow(): Promise<SnapshotRow> {
 // before the cache's existing reach fall back to avg-cost (so PNL ≈ 0 for
 // those days) — fine for a quick refresh but misleading for a first-ever
 // backfill. The scheduler enables it on the one-time boot backfill.
-export async function backfillSnapshots(opts?: {
+export function backfillSnapshots(opts?: {
   since?: string;     // YYYY-MM-DD; defaults to earliest trade date
+  deepWarmPrices?: boolean;
+}): Promise<{ inserted: number; updated: number; days: number }> {
+  if (inflightBackfill) return inflightBackfill;
+  inflightBackfill = backfillSnapshotsImpl(opts).finally(() => {
+    inflightBackfill = null;
+  });
+  return inflightBackfill;
+}
+
+async function backfillSnapshotsImpl(opts?: {
+  since?: string;
   deepWarmPrices?: boolean;
 }): Promise<{ inserted: number; updated: number; days: number }> {
   // Only DIME trades drive the historical state machine. Binance is

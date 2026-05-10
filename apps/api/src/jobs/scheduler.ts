@@ -80,28 +80,69 @@ async function warmOnce() {
   }
 }
 
+// Boot tasks run sequentially, not in parallel. Stacking warmOnce +
+// chart-cache + binance-history-sync + snapshot-backfill as concurrent
+// `void` IIFEs piles up their intermediate buffers (price arrays, trade
+// replays, viem clients) at the same instant — Fly's 512MB machine has
+// been OOM-killed by less. Sequential keeps peak memory bounded to one
+// task at a time, at the cost of a few extra seconds before the
+// dashboard fully warms. Crons (declared below) remain independent.
+async function bootSequence() {
+  await warmOnce();
+  await warmDailyChartCache();
+
+  if (config.binanceEnabled && (await isBinanceSyncSeeded())) {
+    try {
+      console.log('[jobs] binance history: incremental sync on startup…');
+      const r = await importBinanceHistory();
+      console.log(
+        `[jobs] binance history startup sync done: +${r.counts.trades} trades, +${r.counts.deposits} deposits, +${r.counts.rewards} rewards (${(r.durationMs / 1000).toFixed(1)}s)`,
+      );
+    } catch (e) {
+      console.warn('[jobs] binance history startup sync failed:', (e as Error).message);
+    }
+  }
+
+  // Portfolio snapshot warm-up. Three branches, cheapest first:
+  //   1. snapshots exist        → just upsert today's row (DB-only)
+  //   2. snapshots empty + flag  → deep-warm price/FX caches over full
+  //                                history then backfill (heavy; gated
+  //                                on SNAPSHOT_DEEP_WARM=1; trigger via
+  //                                `/portfolio/history?backfill=deep`
+  //                                instead in normal prod)
+  //   3. snapshots empty, no flag→ shallow backfill using whatever
+  //                                prices_daily already has
+  try {
+    const count = await snapshotCount();
+    if (count >= 2) {
+      await captureSnapshotNow();
+    } else if (config.SNAPSHOT_DEEP_WARM) {
+      console.log('[jobs] portfolio snapshots empty + SNAPSHOT_DEEP_WARM set — running deep backfill (one-time)…');
+      const r = await backfillSnapshots({ deepWarmPrices: true });
+      console.log(
+        `[jobs] portfolio snapshot deep backfill: +${r.inserted} inserted, ${r.updated} updated, ${r.days} days`,
+      );
+    } else {
+      console.log('[jobs] portfolio snapshots empty — running shallow backfill (set SNAPSHOT_DEEP_WARM=1 or hit `/portfolio/history?backfill=deep` to populate full price history)…');
+      const r = await backfillSnapshots();
+      console.log(
+        `[jobs] portfolio snapshot backfill: +${r.inserted} inserted, ${r.updated} updated, ${r.days} days`,
+      );
+    }
+  } catch (e) {
+    console.warn('[jobs] snapshot warm-up failed:', (e as Error).message);
+  }
+
+  console.log('[jobs] boot sequence complete');
+}
+
 export function startJobs() {
   if (started) return;
   started = true;
 
-  void warmOnce();
-  void warmDailyChartCache();
-
-  // Incremental Binance history sync on server start (if already seeded).
-  if (config.binanceEnabled) {
-    void (async () => {
-      if (!(await isBinanceSyncSeeded())) return;
-      try {
-        console.log('[jobs] binance history: incremental sync on startup…');
-        const r = await importBinanceHistory();
-        console.log(
-          `[jobs] binance history startup sync done: +${r.counts.trades} trades, +${r.counts.deposits} deposits, +${r.counts.rewards} rewards (${(r.durationMs / 1000).toFixed(1)}s)`,
-        );
-      } catch (e) {
-        console.warn('[jobs] binance history startup sync failed:', (e as Error).message);
-      }
-    })();
-  }
+  // Run boot tasks sequentially in the background — startJobs() returns
+  // immediately so app.listen() doesn't block on warm-up.
+  void bootSequence();
 
   // Prices every 5 min (stocks) + crypto
   cron.schedule('*/5 * * * *', async () => {
@@ -157,27 +198,6 @@ export function startJobs() {
       console.warn('[jobs] portfolio snapshot failed:', (e as Error).message);
     }
   });
-
-  // Lazy backfill on boot if the snapshots table is empty. After this,
-  // the daily cron carries it forward; the API's /portfolio/history
-  // endpoint also self-heals on cold cache.
-  void (async () => {
-    try {
-      if ((await snapshotCount()) < 2) {
-        console.log('[jobs] portfolio snapshots empty — running backfill with deep price warm (one-time)…');
-        const r = await backfillSnapshots({ deepWarmPrices: true });
-        console.log(
-          `[jobs] portfolio snapshot backfill: +${r.inserted} inserted, ${r.updated} updated, ${r.days} days`,
-        );
-      } else {
-        // Always capture *today* on boot so the latest point is fresh
-        // even if the 6h cron hasn't fired in this process yet.
-        await captureSnapshotNow();
-      }
-    } catch (e) {
-      console.warn('[jobs] snapshot warm-up failed:', (e as Error).message);
-    }
-  })();
 
   // FX every hour (live + daily series tail)
   cron.schedule('0 * * * *', async () => {

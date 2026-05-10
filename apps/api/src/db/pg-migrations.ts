@@ -237,6 +237,26 @@ export const PG_MIGRATIONS: Migration[] = [
         ON portfolio_snapshots(ts);
     `,
   },
+  {
+    version: 10,
+    name: 'binance_stables_as_cash',
+    up: `
+      -- Stop modelling Binance USDT/USDC/etc. as crypto positions. The
+      -- live balance is now synthesized into a single Binance USDT-cash
+      -- row by refreshBinance; legacy per-stable rows here would shadow
+      -- it and inflate "By platform" Binance totals. Drop them.
+      DELETE FROM positions
+      WHERE platform = 'Binance'
+        AND symbol IN ('USDT','USDC','BUSD','FDUSD','TUSD','DAI','USDP');
+
+      -- Reset the withdrawals cursor so importWithdrawals re-walks the
+      -- full history and books historical stable withdrawals as negative
+      -- deposits (matching the BinanceTH→Binance USD-deposit treatment).
+      -- Re-walks are idempotent because deposit rows dedupe on (platform,
+      -- source) and the new source prefix is api-withdrawal:.
+      DELETE FROM binance_sync_state WHERE endpoint = 'withdrawals';
+    `,
+  },
 ];
 
 export async function runPgMigrations(pool: Pool) {

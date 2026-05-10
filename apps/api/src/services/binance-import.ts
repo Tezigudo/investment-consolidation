@@ -289,9 +289,25 @@ async function importWithdrawals(
 
   for await (const w of walkWithdrawals(effectiveStart, endMs)) {
     seenAssets.add(w.coin);
-    // Logged only — withdrawals naturally reduce live balance without
-    // needing a trades-row adjustment (cost-basis aggregator scales
-    // costTHB by live_qty / trade_qty).
+    const amount = Number(w.amount);
+    if (amount > 0 && isStable(w.coin)) {
+      // Stables are modelled as cash, so a withdrawal must subtract from
+      // the deposited-capital ledger or "Total deposits" drifts up
+      // forever. Mirrors the importDeposits stable-in path: USD-locked
+      // at withdrawal-time USDTHB.
+      const fxLocked = await getUSDTHBForTs(w.ts);
+      await writeBinanceDeposit({
+        amount_thb: -amount * fxLocked,
+        amount_usd: -amount,
+        fx_locked: fxLocked,
+        ts: w.ts,
+        note: `crypto-out ${amount} ${w.coin} @ ${fxLocked.toFixed(4)} THB/USD`,
+        source: `api-withdrawal:${w.id ?? w.txId ?? `${w.coin}:${w.ts}:${amount}`}`,
+      });
+    }
+    // Non-stable withdrawals: not booked as deposits — the live balance
+    // dropping is enough, and the cost-basis aggregator scales costTHB
+    // by live_qty / trade_qty.
     counts.withdrawals++;
     if (w.ts > lastTs) lastTs = w.ts;
   }

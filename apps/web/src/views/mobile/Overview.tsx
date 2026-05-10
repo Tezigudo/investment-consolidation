@@ -79,8 +79,11 @@ export function Overview({ data, currency, setCurrency, privacy, setPrivacy }: P
 
   const veil = (s: string) => (privacy ? '••••' : s);
 
+  // Same key + same args as the desktop HeroHistoryChart so the in-process
+  // cache is shared if the user resizes between layouts (and so the two
+  // codepaths stay literally consistent in TanStack DevTools).
   const { data: history } = useQuery({
-    queryKey: ['portfolio-history-mobile'],
+    queryKey: ['portfolio-history'],
     queryFn: () => api.portfolioHistory(3650),
     staleTime: 5 * 60_000,
   });
@@ -148,7 +151,9 @@ export function Overview({ data, currency, setCurrency, privacy, setPrivacy }: P
             history={history}
             currency={currency}
             pnlSign={pnlCur >= 0 ? 1 : -1}
-            fallbackToday={{ marketTHB: t.marketTHB, marketUSD: t.marketUSD, ts: data.asOf }}
+            fallbackTHB={t.marketTHB}
+            fallbackUSD={t.marketUSD}
+            fallbackTs={data.asOf}
           />
         </div>
 
@@ -310,17 +315,23 @@ export function Overview({ data, currency, setCurrency, privacy, setPrivacy }: P
 }
 
 // Compact net-worth chart with range pills, mirrors HeroHistoryChart but
-// sized for mobile.
+// sized for mobile. Fallback values are taken as primitives (not an
+// object) so the parent's per-render object literal doesn't churn the
+// memo on every paint.
 function NetWorthSparkline({
   history,
   currency,
   pnlSign,
-  fallbackToday,
+  fallbackTHB,
+  fallbackUSD,
+  fallbackTs,
 }: {
   history: PortfolioHistoryResponse | undefined;
   currency: Currency;
   pnlSign: number;
-  fallbackToday: { marketTHB: number; marketUSD: number; ts: number };
+  fallbackTHB: number;
+  fallbackUSD: number;
+  fallbackTs: number;
 }) {
   const [range, setRange] = useState<ChartRange>('6M');
   const series = useMemo(() => {
@@ -328,10 +339,10 @@ function NetWorthSparkline({
     if (all.length === 0) {
       return [
         {
-          date: new Date(fallbackToday.ts).toISOString().slice(0, 10),
-          ts: fallbackToday.ts,
-          marketUSD: fallbackToday.marketUSD,
-          marketTHB: fallbackToday.marketTHB,
+          date: new Date(fallbackTs).toISOString().slice(0, 10),
+          ts: fallbackTs,
+          marketUSD: fallbackUSD,
+          marketTHB: fallbackTHB,
           costUSD: 0,
           costTHB: 0,
           pnlUSD: 0,
@@ -343,7 +354,7 @@ function NetWorthSparkline({
     const days = RANGE_DAYS[range];
     if (days === Infinity) return all;
     return all.slice(-days);
-  }, [history, range, fallbackToday]);
+  }, [history, range, fallbackTHB, fallbackUSD, fallbackTs]);
 
   const pickY = (d: { marketTHB: number; marketUSD: number }) =>
     currency === 'THB' ? d.marketTHB : d.marketUSD;
@@ -561,12 +572,12 @@ function DrawdownCard({
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
         <div style={M.eyebrow}>Drawdown</div>
         <div style={{ fontSize: 9, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
-          Peak {privacy ? '•••' : fmtMoney(peak, currency, { dp: currency === 'THB' ? 0 : 2 })}
+          Peak {privacy ? '•••' : fmtMoney(peak, currency, { dp: currency === 'THB' ? 0 : 2 })} on {peakAt}
         </div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 4 }}>
         <DDStat label="Current" amount={currentDD} pct={currentDDPct} currency={currency} privacy={privacy} />
-        <DDStat label="Max" amount={maxDD} pct={maxDDPct} currency={currency} privacy={privacy} subtitle={`${maxDDFromPeak.slice(2)} → ${maxDDAt.slice(2)}`} />
+        <DDStat label="Max" amount={maxDD} pct={maxDDPct} currency={currency} privacy={privacy} subtitle={`${maxDDFromPeak} → ${maxDDAt}`} />
       </div>
     </div>
   );
@@ -633,9 +644,11 @@ function IncomeMobile() {
   });
   if (!data || data.totalUSD <= 0.005) return null;
 
+  // Anchor to the 1st of the month-11. setUTCMonth on the current day
+  // overflows when day > target-month length (e.g. May 31 → April 31 →
+  // rolls forward to May 1, dropping a month from the TTM bucket).
   const now = new Date();
-  const trail = new Date(now);
-  trail.setUTCMonth(trail.getUTCMonth() - 11);
+  const trail = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1));
   const trailStart = trail.toISOString().slice(0, 7);
   const ttm = data.byMonth.reduce(
     (acc, m) => {

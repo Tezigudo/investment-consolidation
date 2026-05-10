@@ -114,6 +114,10 @@ async function writeDailyWindow(
 }
 
 export async function warmDailyHistory(symbol: string, kind: 'stock' | 'crypto', days: number): Promise<boolean> {
+  // Stables are always $1 in getPriceUSDTForTs, so the daily cache for
+  // them is never consulted. Skip the warm to avoid pointless 400s on
+  // {STABLE}USDT klines (e.g. USDTUSDT, USDCUSDT post stable-as-cash).
+  if (kind === 'crypto' && isStable(symbol)) return false;
   const today = todayDayStart();
   const fromDay = today - (days - 1) * ONE_DAY;
 

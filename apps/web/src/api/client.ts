@@ -269,6 +269,7 @@ export interface AttributionRow {
   sellQty: number;
   currentQty: number;
   avgBuyUSD: number;
+  avgSellUSD: number;
   currentPriceUSD: number;
   actualReturnUSD: number;
   counterfactualReturnUSD: number;

@@ -295,7 +295,7 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
         </div>
 
         {/* TRADING ATTRIBUTION — humility check on past sells */}
-        <TradingAttribution currency={currency} usdthb={usdthb} privacy={privacy} />
+        <TradingAttribution privacy={privacy} />
 
         {/* HOLDINGS */}
         <div className="widget" style={{ padding: 0, marginBottom: 16 }}>
@@ -604,9 +604,13 @@ function MinimalHeader() {
 
 // Trade attribution: "what if I'd never sold?". Compares actual return
 // (current market + realized) against a buy-and-hold counterfactual.
-// Net impact reduces to sum(sellQty × (sellPrice − currentPrice)) — a
-// clean way to see whether sells got out at a top or gave up upside.
-function TradingAttribution({ currency, usdthb, privacy }: { currency: Currency; usdthb: number; privacy: boolean }) {
+// Net impact reduces to sum(sellQty × (sellPrice − currentPrice)).
+//
+// Displayed in USD only — converting to THB at today's spot would
+// violate the true-baht-PNL contract (cost basis is FX-locked, this
+// counterfactual is not). If a THB version is wanted, fx_at_trade
+// would need to flow through the per-sell math.
+function TradingAttribution({ privacy }: { privacy: boolean }) {
   const { data, isLoading, error } = useQuery({
     queryKey: ['attribution'],
     queryFn: () => api.attribution(),
@@ -619,7 +623,6 @@ function TradingAttribution({ currency, usdthb, privacy }: { currency: Currency;
   if (data.bySymbol.length === 0) return null;
 
   const totalUSD = data.totalImpactUSD;
-  const totalThis = currency === 'THB' ? totalUSD * usdthb : totalUSD;
   const tone = totalUSD >= 0 ? 'var(--up)' : 'var(--down)';
 
   const top = data.bySymbol.slice(0, 6);
@@ -627,21 +630,23 @@ function TradingAttribution({ currency, usdthb, privacy }: { currency: Currency;
     <div className="widget" style={{ padding: '18px 22px', marginBottom: 16 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
         <div>
-          <div style={{ fontSize: 15, fontWeight: 600 }}>Trading attribution</div>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>
+            Trading attribution
+            <span style={{ fontSize: 10, color: 'var(--muted)', marginLeft: 8, fontWeight: 400 }}>USD only</span>
+          </div>
           <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
             Actual return − "if you'd held everything" baseline. Negative = sells gave up upside.
           </div>
         </div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontFamily: 'var(--mono)', fontSize: 22, fontWeight: 500, color: tone }}>
-            {privacy ? '•••' : fmtMoney(totalThis, currency, { sign: true, dp: currency === 'THB' ? 0 : 2 })}
+            {privacy ? '•••' : fmtUSD(totalUSD, { sign: true, dp: 2 })}
           </div>
           <div style={{ fontSize: 10, color: 'var(--muted)' }}>net trading impact</div>
         </div>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10 }}>
         {top.map((r) => {
-          const impactCur = currency === 'THB' ? r.tradingImpactUSD * usdthb : r.tradingImpactUSD;
           const rowTone = r.tradingImpactUSD >= 0 ? 'var(--up)' : 'var(--down)';
           return (
             <div
@@ -655,10 +660,10 @@ function TradingAttribution({ currency, usdthb, privacy }: { currency: Currency;
                 </span>
               </div>
               <div style={{ fontFamily: 'var(--mono)', fontSize: 14, color: rowTone, marginTop: 4 }}>
-                {privacy ? '•••' : fmtMoney(impactCur, currency, { sign: true, dp: currency === 'THB' ? 0 : 2 })}
+                {privacy ? '•••' : fmtUSD(r.tradingImpactUSD, { sign: true, dp: 2 })}
               </div>
               <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>
-                sold {r.sellQty.toFixed(r.sellQty < 1 ? 4 : 2)} @ avg ≈ ${(r.avgBuyUSD).toFixed(2)} · now ${r.currentPriceUSD.toFixed(2)}
+                sold {r.sellQty.toFixed(r.sellQty < 1 ? 4 : 2)} @ avg ≈ ${(r.avgSellUSD).toFixed(2)} · now ${r.currentPriceUSD.toFixed(2)}
               </div>
             </div>
           );
@@ -845,7 +850,9 @@ function DrawdownPanel({
     }
     const dd = peak - v;
     const ddPct = peak > 0 ? (dd / peak) * 100 : 0;
-    if (dd > maxDD) {
+    // Rank by percentage so a 50% dip from a small peak isn't shadowed
+    // by a 10% dip from a larger peak (industry-convention max DD).
+    if (ddPct > maxDDPct) {
       maxDD = dd;
       maxDDPct = ddPct;
       maxDDAt = p.date;

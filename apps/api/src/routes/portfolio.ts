@@ -236,6 +236,7 @@ export async function portfolioRoutes(app: FastifyInstance) {
       sellQty: number;
       currentQty: number;
       avgBuyUSD: number;
+      avgSellUSD: number;
       currentPriceUSD: number;
       actualReturnUSD: number;
       counterfactualReturnUSD: number;
@@ -251,6 +252,7 @@ export async function portfolioRoutes(app: FastifyInstance) {
       const currentQty = a.buyQty - a.sellQty;
       if (currentQty < -0.0001) continue; // shouldn't happen — short positions
       const avgBuyUSD = a.buyQty > 0 ? a.buyCostUSD / a.buyQty : 0;
+      const avgSellUSD = a.sellProceedsUSD / a.sellQty;
       // Counterfactual: held everything, would now be worth buyQty × currentPrice.
       const counterfactualMarketUSD = a.buyQty * currentPrice;
       const counterfactualReturnUSD = counterfactualMarketUSD - a.buyCostUSD;
@@ -266,6 +268,7 @@ export async function portfolioRoutes(app: FastifyInstance) {
         sellQty: a.sellQty,
         currentQty: Math.max(currentQty, 0),
         avgBuyUSD,
+        avgSellUSD,
         currentPriceUSD: currentPrice,
         actualReturnUSD,
         counterfactualReturnUSD,

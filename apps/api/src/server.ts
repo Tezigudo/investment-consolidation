@@ -8,17 +8,18 @@ import { tradeRoutes } from './routes/trades.js';
 import { importRoutes } from './routes/import.js';
 import { symbolRoutes } from './routes/symbols.js';
 import { cashRoutes } from './routes/cash.js';
+import { depositRoutes } from './routes/deposits.js';
+import { incomeRoutes } from './routes/income.js';
 import { startJobs } from './jobs/scheduler.js';
 
 const app = Fastify({ logger: { level: config.NODE_ENV === 'production' ? 'info' : 'debug' } });
 
-// CORS: allow configured origins for the web app. Mobile (RN) does not
-// send Origin headers, so it bypasses this check entirely — no extra
-// LAN origin needed for the iPhone client. Wildcards via the env var
-// are allowed (e.g. `https://*.pages.dev`) — match handled per-request.
+// CORS: allow configured origins for the web app. Wildcards via the env
+// var are allowed (e.g. `https://*.pages.dev`) — match handled per-request.
+// Requests with no Origin header (curl, server-to-server) bypass entirely.
 await app.register(cors, {
   origin(origin, cb) {
-    if (!origin) return cb(null, true); // mobile / curl / server-to-server
+    if (!origin) return cb(null, true); // curl / server-to-server
     for (const pattern of config.CORS_ORIGIN) {
       if (pattern === origin) return cb(null, true);
       if (pattern.includes('*')) {
@@ -55,6 +56,8 @@ await app.register(tradeRoutes);
 await app.register(importRoutes);
 await app.register(symbolRoutes);
 await app.register(cashRoutes);
+await app.register(depositRoutes);
+await app.register(incomeRoutes);
 
 app.setErrorHandler((err, _req, reply) => {
   app.log.error(err);
@@ -62,9 +65,10 @@ app.setErrorHandler((err, _req, reply) => {
 });
 
 try {
-  // Bind to 0.0.0.0 so the mobile client (Expo on a real iPhone) can
-  // hit the API over the LAN. Vite still proxies /api → 127.0.0.1 for
-  // the web side, so nothing changes there.
+  // Bind to 0.0.0.0 so a phone on the LAN can reach the API directly
+  // when hitting the dev web bundle from the same WiFi network. Vite
+  // still proxies /api → 127.0.0.1 on the desktop side, so nothing
+  // changes there.
   await app.listen({ port: config.API_PORT, host: '0.0.0.0' });
   startJobs();
   app.log.info(

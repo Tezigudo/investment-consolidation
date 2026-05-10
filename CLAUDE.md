@@ -15,9 +15,8 @@ wrong; don't break it.
 ## Layout (bun workspaces)
 
 - `apps/api/` — Fastify + TypeScript + Postgres (`pg`). Migrations, Binance HMAC client, CSV importer, portfolio aggregator, on-chain (viem) integrations, cron jobs, CLI.
-- `apps/web/` — Vite + React 18 + TypeScript + TanStack Query. One desktop-grid dashboard.
-- `apps/mobile/` — Expo SDK 54 + React Native 0.81 + Expo Router + TanStack Query. iOS-first local-use app for the same data, talks to the API over LAN/Tailscale.
-- `packages/shared/` — cross-workspace types (`PortfolioSnapshot`, `EnrichedPosition`, `TradeRow`, `Currency`, …). **Contract between api, web, AND mobile — keep all three sides importing from here, never duplicate the shapes.** Must stay ESM-clean (no Node built-ins) so Metro bundles it cleanly.
+- `apps/web/` — Vite + React 18 + TypeScript + TanStack Query. Desktop dashboard plus a mobile shell that renders when the viewport is narrow (`useIsMobile`). Installable as a PWA via the `manifest.webmanifest` and Apple-touch meta tags in `index.html` — the user adds it to their phone's home screen instead of running a native app.
+- `packages/shared/` — cross-workspace types (`PortfolioSnapshot`, `EnrichedPosition`, `TradeRow`, `Currency`, …). **Contract between api and web — keep both sides importing from here, never duplicate the shapes.**
 - `design/` — original Claude Design HTML/JSX prototype, kept for visual reference only. Do not import from it.
 
 ## Commands
@@ -27,10 +26,8 @@ bun install
 bun run dev             # concurrent api (:4000) + web (:5173)
 bun run dev:api         # api only
 bun run dev:web         # web only
-bun run dev:mobile      # Expo on LAN; phone scans QR via Camera → Expo Go
-bun run dev:mobile:tunnel  # Expo via tunnel (use off-LAN; slower)
-bun run typecheck       # all three workspaces in parallel
-bun run build           # typecheck + vite build (mobile is not part of build)
+bun run typecheck       # api + web in parallel
+bun run build           # typecheck + vite build
 bun run --filter @consolidate/api test            # vitest
 bun run --filter @consolidate/api test -- cost-basis  # single test file
 bun run import:dime -- path/to/dime-export.csv
@@ -40,13 +37,11 @@ Bun is the package manager and workspace task runner. The API runs under Node vi
 
 The web dev server proxies `/api/*` → `http://127.0.0.1:4000` (see `apps/web/vite.config.ts`). The frontend always calls `/api/...` — never hard-code `localhost:4000` into components.
 
-The API binds to `0.0.0.0` (not `127.0.0.1`) so the mobile client on a real iPhone can reach it. Don't change this back unless mobile is gone.
-
-Mobile-specific scripts must `cd apps/mobile && bun run …` rather than `bun run --filter`; the workspace filter wraps stdout and swallows the Expo QR ASCII output.
+The API binds to `0.0.0.0` (not `127.0.0.1`) so a phone on the same LAN can hit the dev web bundle and have its `/api/*` requests reach the Mac. Keep this for PWA-on-phone testing.
 
 ## Hot-path discipline (important)
 
-`GET /portfolio` must read **only from Postgres** (`positions`, `prices`, `fx_rates`, `cash`, `trades` tables). Both the web dashboard AND the mobile app poll this endpoint every 30s via TanStack Query — making it hit Binance/Finnhub/Yahoo on every request will rate-limit you fast.
+`GET /portfolio` must read **only from Postgres** (`positions`, `prices`, `fx_rates`, `cash`, `trades` tables). The dashboard polls this endpoint every 30s via TanStack Query — from desktop and from the PWA on the user's phone — so making it hit Binance/Finnhub/Yahoo on every request will rate-limit you fast.
 
 Live outbound calls live in:
 
@@ -70,7 +65,7 @@ Every trade row carries `fx_at_trade` (USDTHB at the moment of the fill). The pu
 
 The dashboard shows `pnlTHB - fxContribTHB` as "Market PNL" and `fxContribTHB` as "FX contribution." If you change cost-basis math, update `cost-basis.test.ts` (5 cases covering buy-only, partial sell, full sell + rebuy, DIV, and SELL-before-BUY).
 
-There's a **second cost-basis method** alongside weighted-avg: **FIFO**, computed by `aggregateTradesFIFO` and exposed on `EnrichedPosition.fifoCostUSD` / `fifoCostTHB`. This is what the DIME app uses ("Total cost" / "Cost per Share"). The web "DIME view" toggle and mobile cost-view switch render this number so the dashboard reconciles with what DIME shows. Don't conflate it with `costUSD - realizedUSD` (= net cash invested) — that's a third metric and matches neither weighted-avg nor FIFO. FIFO has its own tests in `cost-basis.test.ts`.
+There's a **second cost-basis method** alongside weighted-avg: **FIFO**, computed by `aggregateTradesFIFO` and exposed on `EnrichedPosition.fifoCostUSD` / `fifoCostTHB`. This is what the DIME app uses ("Total cost" / "Cost per Share"). The dashboard's "DIME view" toggle (desktop) and cost-view switch (mobile shell) render this number so the figures reconcile with what the DIME app shows. Don't conflate it with `costUSD - realizedUSD` (= net cash invested) — that's a third metric and matches neither weighted-avg nor FIFO. FIFO has its own tests in `cost-basis.test.ts`.
 
 ## CSV importer
 
@@ -88,13 +83,11 @@ Pricing is served by `/api/v3/ticker/price` in a single batched call (array form
 
 ## Env loading
 
-`apps/api/src/config.ts` loads `.env` from the **repo root** (not `apps/api/.env`). Vite does the same via `envDir: root` in its config. Add **API/web** env vars to the root `.env`.
-
-The mobile app is an exception — Expo loads `apps/mobile/.env.local` separately. Only `EXPO_PUBLIC_*` vars are exposed to the bundle. The one that matters is `EXPO_PUBLIC_API_URL` (the LAN/Tailscale URL of the Mac running the API). The user can also override it at runtime via Settings → Server.
+`apps/api/src/config.ts` loads `.env` from the **repo root** (not `apps/api/.env`). Vite does the same via `envDir: root` in its config. Add API + web env vars to the root `.env`.
 
 ## Database
 
-Postgres runs via `docker-compose.yml` (service `db`, port 5432, db/user/password all `consolidate`). Connection string in `DATABASE_URL`. In production this points at Neon (Singapore region, free tier with auto-suspend). Migrations run on first import of `./db/client.js`; add new ones as appended entries in `apps/api/src/db/pg-migrations.ts` with a monotonically increasing `version` — never edit applied migrations in place. Current head is **migration 8** (`onchain_airdrop_state`).
+Postgres runs via `docker-compose.yml` (service `db`, port 5432, db/user/password all `consolidate`). Connection string in `DATABASE_URL`. In production this points at Neon (Singapore region, free tier with auto-suspend). Migrations run on first import of `./db/client.js`; add new ones as appended entries in `apps/api/src/db/pg-migrations.ts` with a monotonically increasing `version` — never edit applied migrations in place. Current head is **migration 9** (`portfolio_snapshots`).
 
 Tables carry intent: `deposits.fx_locked`, `trades.fx_at_trade`, and `positions.cost_basis_thb` are the FX-locked columns. If you add a new source of trades, make sure it writes an FX rate per row or the whole PNL model fails silently.
 
@@ -113,13 +106,12 @@ Touching prod silently burns deploy quota, can race with cron-modifying state, a
 | API | Fly.io (`investment-consolidation` app, region `sin`, single 512MB shared-cpu-1x machine) | `https://investment-consolidation.fly.dev` |
 | Web | Cloudflare Pages (`consolidate-web`, auto-builds from `main` branch) | `https://consolidate-web.pages.dev` |
 | Postgres | Neon (`ap-southeast-1`, pooler endpoint) | via `DATABASE_URL` Fly secret |
-| Mobile | Expo Go on the user's phone (no store distribution) | LAN/Tailscale to API |
+| Phone | Same Cloudflare Pages bundle, installed via "Add to Home Screen" (PWA) | (no separate distribution) |
 
 **Fly machine sizing:** 256MB OOM-killed during the boot warmup (Binance + price + on-chain crons fire close together). 512MB is the floor — set in `fly.toml` (`[[vm]]` section).
 
 **Fly Dockerfile gotchas:**
 - `oven/bun:1.2.21-alpine` is pinned exactly (not `1.2-alpine`) because lockfile compatibility differs between Bun patch versions.
-- `apps/mobile/package.json` MUST be copied into the build context even though mobile isn't deployed — Bun walks the workspace globs (`apps/*`) and refuses `--frozen-lockfile` if any workspace manifest is missing. `.dockerignore` excludes the mobile source but includes the manifest via `!apps/mobile/package.json`.
 - Runtime is `node:24.15.0-alpine` (not Bun) to match the local dev runtime.
 
 **Cloudflare Pages config:**
@@ -129,9 +121,7 @@ Touching prod silently burns deploy quota, can race with cron-modifying state, a
 
 **Auth model:**
 - API requires `Authorization: Bearer <token>` on every route except `/health`.
-- Token is generated once (`openssl rand -hex 32`) and set as the `API_AUTH_TOKEN` Fly secret. The same token is pasted by the user into:
-  - **Web** — bottom-right ⚙ "Tweaks" panel, persisted to `localStorage['consolidate.apiToken']`.
-  - **Mobile** — Settings tab → API auth token field, persisted via AsyncStorage.
+- Token is generated once (`openssl rand -hex 32`) and set as the `API_AUTH_TOKEN` Fly secret. The user pastes the same token into the bottom-right ⚙ "Tweaks" panel of the web app — persisted to `localStorage['consolidate.apiToken']` and reused when the page is opened from the iOS home-screen icon.
 - The Dashboard's loading/error states render a skeleton + top-right Toast (not a black screen), and the Tweaks gear is always reachable from the App level so the user can configure auth even when the API errors.
 
 ## On-chain (World Chain) tracking
@@ -146,7 +136,7 @@ Touching prod silently burns deploy quota, can race with cron-modifying state, a
 
 **Event walking is incremental.** Each state row stores `last_scanned_block`; subsequent ticks scan only the new ~150 blocks per 5-min cron. First-ever scan walks all ~30M blocks at 1M blocks/chunk (~6s) — public Alchemy's response-size cap is fine because the wallet/source topic filter shrinks responses to a handful of logs.
 
-The `/symbols/:sym/history` endpoint folds vault yield into the existing `earned` aggregate (alongside Binance Earn rewards) and exposes airdrop separately as `airdrop`. Web (`PriceModal`) and mobile (position screen) each render a dedicated "Airdrop received" card when non-zero.
+The `/symbols/:sym/history` endpoint folds vault yield into the existing `earned` aggregate (alongside Binance Earn rewards) and exposes airdrop separately as `airdrop`. The desktop `PriceModal` and the mobile-shell `PositionSheet` each render a dedicated "Airdrop received" card when non-zero.
 
 ## Chart cache (price-history)
 
@@ -154,20 +144,17 @@ The `/symbols/:sym/history` endpoint folds vault yield into the existing `earned
 
 If you change the chart's default window (`CHART_HISTORY_DAYS` in `scheduler.ts`), the warm function will pick up the new range on next run.
 
-## Mobile app (apps/mobile)
+## Mobile (PWA shell inside the web app)
 
-Expo SDK 54 + Expo Router + RN 0.81. Local-use only — no App Store, no auth beyond Face ID at app open.
+There is no separate native app. The phone view is the same React bundle, switched on by `apps/web/src/lib/useIsMobile.ts` (viewport-width breakpoint) and rendered through `apps/web/src/views/MobileShell.tsx` instead of the desktop `Dashboard`. Tabs live under `apps/web/src/views/mobile/` (Overview, Holdings, Activity, Settings, PositionSheet).
+
+Install path: open `https://consolidate-web.pages.dev` in mobile Safari → Share → Add to Home Screen. The `manifest.webmanifest` + `apple-mobile-web-app-*` meta tags in `apps/web/index.html` make it launch standalone (no browser chrome). Auth token + API URL overrides live in the same `localStorage` keys the desktop Tweaks panel writes, so settings carry over.
 
 Key constraints:
 
-- **Networking is LAN-direct.** No Vite-style proxy; the API base URL is the full Mac LAN/Tailscale URL. Set in `apps/mobile/.env.local` or via Settings → Server. Phone must reach the Mac on port 4000.
-- **Metro is monorepo-aware.** `metro.config.js` adds the workspace root to `watchFolders` and walks `nodeModulesPaths` upward; don't simplify it.
-- **`@consolidate/shared` must stay ESM-clean** (no Node built-ins) — Metro will choke otherwise.
-- **Charts are hand-rolled SVG** in `src/components/PriceChart.tsx`. We avoided `victory-native` to keep the dep tree slim. If you need pinch-zoom or crosshair tooltips later, swap to victory-native CartesianChart with the Skia backend.
-- **`pnlPctTHB` from `EnrichedPosition` is unsafe to display directly.** After partial sells, `costTHB` shrinks proportionally and the % explodes (e.g. 3,000% on a position that's been mostly sold). Use `safePctDisplay(pnl, base)` from `src/lib/format.ts` with `base = costTHB - realizedUSD * fxLocked` (≈ original net cash invested) — it clamps to ±999% and returns null when meaningless (zero cost basis, fully closed positions).
-- **Price `kind` mapping** in `src/lib/kind.ts`: `DIME → stock`, everything else (Binance, OnChain) → `crypto`. Same logic the web's PriceModal uses. Don't infer it from the symbol.
-- **FlashList v2** removed `estimatedItemSize` — don't add it back.
-- **Don't run mobile via `bun run --filter`.** The workspace runner buffers stdout and eats the Expo QR. The root scripts cd into `apps/mobile` directly.
+- **`pnlPctTHB` from `EnrichedPosition` is unsafe to display directly.** After partial sells, `costTHB` shrinks proportionally and the % explodes (e.g. 3,000% on a position that's been mostly sold). Use `safePctDisplay(pnl, base)` from the mobile shell's `lib/format.ts` with `base = costTHB - realizedUSD * fxLocked` (≈ original net cash invested) — it clamps to ±999% and returns null when meaningless (zero cost basis, fully closed positions).
+- **Charts are hand-rolled SVG** in `apps/web/src/views/mobile/PriceChart.tsx` for parity with the desktop side and to keep the bundle small. No third-party charting libs.
+- **Price `kind` mapping** lives next to the desktop logic — don't infer from the symbol; `DIME → stock`, everything else → `crypto`.
 
 ## Design prototype
 
@@ -287,6 +274,6 @@ Active: [new session]
 Last: [first session]
 
 ## Session Continuity
-State: No changes or facts in this session.
+State: (no changes or facts recorded in this session segment)
 
 # === END COGNILAYER ===

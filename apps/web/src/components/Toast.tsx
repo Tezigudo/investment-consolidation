@@ -14,7 +14,7 @@ export function Toast({ tone = 'info', title, message, actionLabel, onAction, on
     <div
       style={{
         position: 'fixed',
-        top: 16,
+        top: 'calc(16px + env(safe-area-inset-top))',
         right: 16,
         zIndex: 100,
         background: 'var(--surface)',

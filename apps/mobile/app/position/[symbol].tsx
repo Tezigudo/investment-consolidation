@@ -390,6 +390,47 @@ export default function PositionDetailScreen() {
           </Card>
         ) : null}
 
+        {history.data && history.data.airdrop && history.data.airdrop.qty > 0 ? (
+          <Card style={{ marginBottom: spacing.lg }}>
+            <Text
+              style={{
+                ...typography.micro,
+                color: colors.textDim,
+                textTransform: 'uppercase',
+                marginBottom: spacing.md,
+              }}
+            >
+              Airdrop received · {history.data.airdrop.count} drops
+            </Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <Stat
+                label="Total received"
+                value={fmtQty(history.data.airdrop.qty)}
+                sub={`${symbol} from grants`}
+                tone="pos"
+              />
+              <Stat
+                label="Value today"
+                value={fmtTHB(history.data.airdrop.valueTHB)}
+                sub={fmtUSD(history.data.airdrop.valueUSD)}
+                tone="pos"
+                align="right"
+              />
+            </View>
+            {history.data.airdrop.firstTs > 0 ? (
+              <Text
+                style={{
+                  ...typography.caption,
+                  color: colors.textDim,
+                  marginTop: spacing.sm,
+                }}
+              >
+                {fmtDate(history.data.airdrop.firstTs)} → {fmtDate(history.data.airdrop.lastTs)}
+              </Text>
+            ) : null}
+          </Card>
+        ) : null}
+
         {history.data && history.data.trades.length > 0 ? (
           <Card>
             <Text

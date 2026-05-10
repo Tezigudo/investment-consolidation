@@ -2,7 +2,6 @@ import { useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Currency } from '@consolidate/shared';
-import { SettingsPopover } from './SettingsPopover';
 
 interface Props {
   currency: Currency;
@@ -197,7 +196,6 @@ export function TopBar({ currency, setCurrency, lastSyncMs }: Props) {
           )}
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <SettingsPopover />
           <div style={{ display: 'flex', gap: 4, background: 'var(--surface-2)', padding: 3, borderRadius: 8 }}>
             {(['USD', 'THB', 'USDT'] as Currency[]).map((c) => (
             <button

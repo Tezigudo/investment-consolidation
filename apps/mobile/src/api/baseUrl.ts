@@ -24,10 +24,21 @@ export async function getApiUrl(): Promise<string> {
   return cachedUrl;
 }
 
+// Stored override only (empty when unset). Distinct from getApiUrl so
+// the Settings input shows what was saved, not the resolved fallback.
+export async function getStoredApiUrl(): Promise<string> {
+  return (await AsyncStorage.getItem(URL_KEY)) || '';
+}
+
 export async function setApiUrl(url: string): Promise<void> {
   const trimmed = url.trim().replace(/\/$/, '');
   await AsyncStorage.setItem(URL_KEY, trimmed);
   cachedUrl = trimmed;
+}
+
+export async function clearApiUrl(): Promise<void> {
+  await AsyncStorage.removeItem(URL_KEY);
+  cachedUrl = null;
 }
 
 export async function getApiToken(): Promise<string> {
@@ -37,10 +48,19 @@ export async function getApiToken(): Promise<string> {
   return cachedToken;
 }
 
+export async function getStoredApiToken(): Promise<string> {
+  return (await AsyncStorage.getItem(TOKEN_KEY)) || '';
+}
+
 export async function setApiToken(token: string): Promise<void> {
   const trimmed = token.trim();
   await AsyncStorage.setItem(TOKEN_KEY, trimmed);
   cachedToken = trimmed;
+}
+
+export async function clearApiToken(): Promise<void> {
+  await AsyncStorage.removeItem(TOKEN_KEY);
+  cachedToken = null;
 }
 
 export function getApiUrlSync(): string {

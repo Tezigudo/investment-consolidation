@@ -149,6 +149,67 @@ export const PG_MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 6,
+    name: 'onchain_vault_state',
+    up: `
+      -- Per-(wallet, vault) cumulative deposit/withdrawal totals so we
+      -- can derive vault yield as: (withdrawals + current) - deposits.
+      -- Raw amounts kept as NUMERIC(78,0) to preserve uint256 precision —
+      -- 18-decimal token quantities exceed BIGINT for some tokens.
+      CREATE TABLE IF NOT EXISTS onchain_vault_state (
+        symbol                TEXT NOT NULL,
+        wallet                TEXT NOT NULL,
+        vault                 TEXT NOT NULL,
+        decimals              SMALLINT NOT NULL,
+        total_deposits_raw    NUMERIC(78,0) NOT NULL DEFAULT 0,
+        total_withdrawals_raw NUMERIC(78,0) NOT NULL DEFAULT 0,
+        current_assets_raw    NUMERIC(78,0) NOT NULL DEFAULT 0,
+        last_scanned_block    BIGINT NOT NULL DEFAULT 0,
+        updated_at            BIGINT NOT NULL,
+        PRIMARY KEY (wallet, vault)
+      );
+      CREATE INDEX IF NOT EXISTS idx_onchain_vault_state_symbol
+        ON onchain_vault_state(symbol);
+    `,
+  },
+  {
+    version: 7,
+    name: 'onchain_vault_state_rescan',
+    up: `
+      -- Wipe so the next on-chain refresh re-walks Deposit/Withdraw
+      -- events with the corrected filter (Withdraw now matches by
+      -- indexed receiver, not owner — Morpho's bundler routes burn
+      -- shares it owns on the user's behalf, so the prior owner-only
+      -- filter missed ~95% of withdrawals).
+      DELETE FROM onchain_vault_state;
+    `,
+  },
+  {
+    version: 8,
+    name: 'onchain_airdrop_state',
+    up: `
+      -- Cumulative WLD (or other token) received by the wallet from a
+      -- specific distributor contract — typically the Worldcoin weekly
+      -- grant. Surfaced as a separate "Airdrop received" stat alongside
+      -- vault yield so the user can compare each metric independently.
+      CREATE TABLE IF NOT EXISTS onchain_airdrop_state (
+        symbol               TEXT NOT NULL,
+        wallet               TEXT NOT NULL,
+        source               TEXT NOT NULL,
+        decimals             SMALLINT NOT NULL,
+        total_received_raw   NUMERIC(78,0) NOT NULL DEFAULT 0,
+        event_count          INTEGER NOT NULL DEFAULT 0,
+        first_ts             BIGINT NOT NULL DEFAULT 0,
+        last_ts              BIGINT NOT NULL DEFAULT 0,
+        last_scanned_block   BIGINT NOT NULL DEFAULT 0,
+        updated_at           BIGINT NOT NULL,
+        PRIMARY KEY (wallet, source)
+      );
+      CREATE INDEX IF NOT EXISTS idx_onchain_airdrop_state_symbol
+        ON onchain_airdrop_state(symbol);
+    `,
+  },
 ];
 
 export async function runPgMigrations(pool: Pool) {

@@ -35,13 +35,10 @@ export interface DimeMailResult {
   debugDir: string;
 }
 
-// Resolution order:
-//   1. localStorage override (Settings → Server URL) — lets user retarget
-//      a deployed web build at a different API without a redeploy.
-//   2. VITE_API_URL baked at build time (Cloudflare Pages env var).
-//   3. /api fallback — only meaningful in dev (Vite proxies to :4000).
-const ENV_BASE = (import.meta as { env?: Record<string, string | undefined> }).env
-  ?.VITE_API_URL;
+// Resolution order: stored override → VITE_API_URL → PROD_DEFAULT
+// (non-localhost) → '/api' (vite dev proxy).
+const ENV_BASE = import.meta.env.VITE_API_URL as string | undefined;
+const PROD_DEFAULT = 'https://investment-consolidation.fly.dev';
 const TOKEN_KEY = 'consolidate.apiToken';
 const URL_KEY = 'consolidate.apiUrl';
 
@@ -51,6 +48,12 @@ function readBase(): string {
     if (stored) return stored.replace(/\/$/, '');
   }
   if (ENV_BASE) return ENV_BASE.replace(/\/$/, '');
+  // Vite proxies /api → :4000 only on localhost. On any deployed host
+  // (Cloudflare Pages), fall through to the prod Fly URL instead of /api,
+  // which would otherwise loop back to the Pages domain.
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+    return PROD_DEFAULT;
+  }
   return '/api';
 }
 
@@ -64,6 +67,23 @@ export function setApiUrl(url: string) {
 }
 export function setApiToken(token: string) {
   localStorage.setItem(TOKEN_KEY, token.trim());
+}
+export function clearApiUrl() {
+  localStorage.removeItem(URL_KEY);
+}
+export function clearApiToken() {
+  localStorage.removeItem(TOKEN_KEY);
+}
+// Stored override only (empty when unset) — distinct from the resolved
+// value so the Settings input shows "what I actually saved", not the
+// fallback chain's current pick.
+export function getStoredApiUrl(): string {
+  if (typeof window === 'undefined') return '';
+  return localStorage.getItem(URL_KEY) || '';
+}
+export function getStoredApiToken(): string {
+  if (typeof window === 'undefined') return '';
+  return localStorage.getItem(TOKEN_KEY) || '';
 }
 export function getApiUrl(): string {
   return readBase();
@@ -105,6 +125,7 @@ export const api = {
       realizedFxContribTHB: number;
       series: { t: number; price: number }[];
       earned: { qty: number; valueUSD: number; valueTHB: number; count: number; firstTs: number; lastTs: number };
+      airdrop: { qty: number; valueUSD: number; valueTHB: number; count: number; sources: number; firstTs: number; lastTs: number } | null;
       trades: { id: number; ts: number; side: 'BUY' | 'SELL' | 'DIV'; qty: number; price_usd: number; fx_at_trade: number; commission: number; source: string | null }[];
     }>(`/symbols/${encodeURIComponent(sym)}/history${s ? `?${s}` : ''}`);
   },

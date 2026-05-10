@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import { usePortfolio, useTrades } from '../hooks/usePortfolio';
 import { fmtMoney, fmtPct, fmtTHB, fmtUSD } from '../lib/format';
 import { TopBar } from '../components/TopBar';
+import { DashboardSkeleton } from '../components/DashboardSkeleton';
+import { Toast } from '../components/Toast';
 import { DualHeroCell } from '../components/DualHeroCell';
 import { Donut, WinLossBar, AreaChart } from '../components/charts';
 import { PriceModal } from '../components/PriceModal';
@@ -51,16 +53,26 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
     return out;
   }, [currency, t?.costTHB, t?.costUSD, t?.marketTHB, t?.marketUSD]);
 
-  if (error) {
+  if (error || isLoading || !snap || !t) {
+    const errMsg = error ? (error as Error).message : null;
+    const is401 = errMsg ? /\b401\b/.test(errMsg) : false;
     return (
-      <div style={{ padding: 40, color: 'var(--down)' }}>
-        API error: {(error as Error).message}. Is the backend running? (<code>npm run dev</code> at repo root)
-      </div>
+      <>
+        <MinimalHeader />
+        <DashboardSkeleton />
+        {errMsg && (
+          <Toast
+            tone={is401 ? 'warn' : 'error'}
+            title={is401 ? 'Sign in needed' : 'API error'}
+            message={
+              is401
+                ? 'Click the ⚙ in the bottom-right and paste your bearer token to load your portfolio.'
+                : `${errMsg}. Check your API URL in the ⚙ settings (bottom-right).`
+            }
+          />
+        )}
+      </>
     );
-  }
-
-  if (isLoading || !snap || !t) {
-    return <div style={{ padding: 40, color: 'var(--muted)' }}>Loading portfolio…</div>;
   }
 
   const usdthb = snap.fx.usdthb;
@@ -551,6 +563,21 @@ function TxRow({ tx }: { tx: TradeRow }) {
         </div>
         <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--muted)' }}>FX {tx.fx_at_trade.toFixed(2)}</div>
       </div>
+    </div>
+  );
+}
+
+function MinimalHeader() {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        padding: '14px 28px',
+        borderBottom: '1px solid var(--border)',
+      }}
+    >
+      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>Consolidate</div>
     </div>
   );
 }

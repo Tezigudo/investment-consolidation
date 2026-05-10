@@ -4,6 +4,8 @@ import { getPrice } from '../services/prices.js';
 import { binancePublicGet } from './../services/binance-http.js';
 import { dateKey } from '../services/fx-history.js';
 import { aggregateTrades } from '../services/cost-basis.js';
+import { readOnchainEarnForSymbol, readOnchainAirdropForSymbol } from '../services/onchain.js';
+import { getUSDTHB } from '../services/fx.js';
 import type { TradeRow } from '../db/types.js';
 
 // Real daily price history. Reads from `prices_daily` cache first, then
@@ -248,6 +250,35 @@ export async function symbolRoutes(app: FastifyInstance) {
     );
 
     const todayUSD = await getPrice(sym, kind);
+
+    const onchain = await readOnchainEarnForSymbol(sym);
+    if (onchain && onchain.qty > 0) {
+      const fx = todayUSD > 0 ? await getUSDTHB() : null;
+      const valueUSD = onchain.qty * todayUSD;
+      earned.qty += onchain.qty;
+      earned.valueUSD += valueUSD;
+      earned.valueTHB += fx ? valueUSD * fx.rate : 0;
+      earned.count += onchain.vaultCount;
+    }
+
+    const airdropAgg = await readOnchainAirdropForSymbol(sym);
+    let airdrop:
+      | { qty: number; valueUSD: number; valueTHB: number; count: number; sources: number; firstTs: number; lastTs: number }
+      | null = null;
+    if (airdropAgg && airdropAgg.qty > 0) {
+      const fx = todayUSD > 0 ? await getUSDTHB() : null;
+      const valueUSD = airdropAgg.qty * todayUSD;
+      airdrop = {
+        qty: airdropAgg.qty,
+        valueUSD,
+        valueTHB: fx ? valueUSD * fx.rate : 0,
+        count: airdropAgg.count,
+        sources: airdropAgg.sources,
+        firstTs: airdropAgg.firstTs,
+        lastTs: airdropAgg.lastTs,
+      };
+    }
+
     const series = await buildSeries(sym, kind, n, todayUSD);
 
     return {
@@ -260,6 +291,7 @@ export async function symbolRoutes(app: FastifyInstance) {
       realizedFxContribTHB: agg.realizedFxContribTHB,
       series,
       earned,
+      airdrop,
       // Trades list now spot-only — Earn rewards roll up into `earned`.
       trades: spotTrades.map((t) => ({
         id: t.id,

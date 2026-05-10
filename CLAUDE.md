@@ -14,7 +14,7 @@ wrong; don't break it.
 
 ## Layout (bun workspaces)
 
-- `apps/api/` — Fastify + TypeScript + Postgres (`pg`). Migrations, Binance HMAC client, CSV importer, portfolio aggregator, cron jobs, CLI. (Legacy `better-sqlite3` dep is still present but unused — Postgres is the source of truth.)
+- `apps/api/` — Fastify + TypeScript + Postgres (`pg`). Migrations, Binance HMAC client, CSV importer, portfolio aggregator, on-chain (viem) integrations, cron jobs, CLI.
 - `apps/web/` — Vite + React 18 + TypeScript + TanStack Query. One desktop-grid dashboard.
 - `apps/mobile/` — Expo SDK 54 + React Native 0.81 + Expo Router + TanStack Query. iOS-first local-use app for the same data, talks to the API over LAN/Tailscale.
 - `packages/shared/` — cross-workspace types (`PortfolioSnapshot`, `EnrichedPosition`, `TradeRow`, `Currency`, …). **Contract between api, web, AND mobile — keep all three sides importing from here, never duplicate the shapes.** Must stay ESM-clean (no Node built-ins) so Metro bundles it cleanly.
@@ -92,9 +92,65 @@ The mobile app is an exception — Expo loads `apps/mobile/.env.local` separatel
 
 ## Database
 
-Postgres runs via `docker-compose.yml` (service `db`, port 5432, db/user/password all `consolidate`). Connection string in `DATABASE_URL`. Migrations run on first import of `./db/client.js`; add new ones as appended entries in `apps/api/src/db/pg-migrations.ts` with a monotonically increasing `version` — never edit applied migrations in place.
+Postgres runs via `docker-compose.yml` (service `db`, port 5432, db/user/password all `consolidate`). Connection string in `DATABASE_URL`. In production this points at Neon (Singapore region, free tier with auto-suspend). Migrations run on first import of `./db/client.js`; add new ones as appended entries in `apps/api/src/db/pg-migrations.ts` with a monotonically increasing `version` — never edit applied migrations in place. Current head is **migration 8** (`onchain_airdrop_state`).
 
 Tables carry intent: `deposits.fx_locked`, `trades.fx_at_trade`, and `positions.cost_basis_thb` are the FX-locked columns. If you add a new source of trades, make sure it writes an FX rate per row or the whole PNL model fails silently.
+
+`positions.updated_at` is a **`BIGINT`** Unix-ms timestamp, not a `timestamptz`. Pass `Date.now()` not `new Date()`. (Same for `cash.updated_at`.)
+
+## Default to local
+
+Ad-hoc verification ("test the endpoint", "check the API", "curl it") defaults to **local** dev: `http://localhost:4000` for the API, `http://localhost:5173` for the web (which proxies `/api` to :4000), the local docker-compose Postgres for SQL. Only hit Fly / Cloudflare / Neon when the user explicitly says "prod" / "Fly" / names the deployed URL, OR invokes one of the named-prod slash commands (`/check-prod`, `/deploy-api`, `/onchain-state`).
+
+Touching prod silently burns deploy quota, can race with cron-modifying state, and can mask local bugs. If unsure which environment the user means, ask one clarifying line before running.
+
+## Production deployment
+
+| Layer | Host | URL |
+|---|---|---|
+| API | Fly.io (`investment-consolidation` app, region `sin`, single 512MB shared-cpu-1x machine) | `https://investment-consolidation.fly.dev` |
+| Web | Cloudflare Pages (`consolidate-web`, auto-builds from `main` branch) | `https://consolidate-web.pages.dev` |
+| Postgres | Neon (`ap-southeast-1`, pooler endpoint) | via `DATABASE_URL` Fly secret |
+| Mobile | Expo Go on the user's phone (no store distribution) | LAN/Tailscale to API |
+
+**Fly machine sizing:** 256MB OOM-killed during the boot warmup (Binance + price + on-chain crons fire close together). 512MB is the floor — set in `fly.toml` (`[[vm]]` section).
+
+**Fly Dockerfile gotchas:**
+- `oven/bun:1.2.21-alpine` is pinned exactly (not `1.2-alpine`) because lockfile compatibility differs between Bun patch versions.
+- `apps/mobile/package.json` MUST be copied into the build context even though mobile isn't deployed — Bun walks the workspace globs (`apps/*`) and refuses `--frozen-lockfile` if any workspace manifest is missing. `.dockerignore` excludes the mobile source but includes the manifest via `!apps/mobile/package.json`.
+- Runtime is `node:24.15.0-alpine` (not Bun) to match the local dev runtime.
+
+**Cloudflare Pages config:**
+- Root directory: `apps/web`, build command: `bun run build`, output: `dist`.
+- Pages env vars (`Settings → Variables and Secrets`) are **runtime** vars only — they DO NOT reach the Vite build container. The production API URL is therefore hardcoded as a fallback in `apps/web/src/api/client.ts` (`PROD_DEFAULT`); user can still override at runtime via the Tweaks panel → API URL field.
+- `wrangler.toml` at `apps/web/` is required to stop wrangler 4.x from running workspace-detection at the repo root.
+
+**Auth model:**
+- API requires `Authorization: Bearer <token>` on every route except `/health`.
+- Token is generated once (`openssl rand -hex 32`) and set as the `API_AUTH_TOKEN` Fly secret. The same token is pasted by the user into:
+  - **Web** — bottom-right ⚙ "Tweaks" panel, persisted to `localStorage['consolidate.apiToken']`.
+  - **Mobile** — Settings tab → API auth token field, persisted via AsyncStorage.
+- The Dashboard's loading/error states render a skeleton + top-right Toast (not a black screen), and the Tweaks gear is always reachable from the App level so the user can configure auth even when the API errors.
+
+## On-chain (World Chain) tracking
+
+`src/services/onchain.ts` reads via viem's public client against World Chain (chain ID 480). Three things are tracked per (wallet, configured token):
+
+1. **Wallet balance** + **vault assets** — `balanceOf` + `convertToAssets` calls per ERC-4626 vault listed in `ONCHAIN_WLD_VAULTS`. Persisted in `positions` so the hot-path aggregator picks it up.
+2. **Vault yield** — Walks `Deposit` (filtered by indexed `owner = wallet`) and `Withdraw` (filtered by indexed `receiver = wallet`) events for each vault. Lifetime yield = `(withdrawals + current) − deposits`. Persisted in `onchain_vault_state`.
+3. **Airdrop receipts** — Walks ERC-20 `Transfer` events on the token where `from = any configured distributor` and `to = wallet`. Persisted in `onchain_airdrop_state`. Default distributor is the Worldcoin weekly grant (`0x3Ef3D8bA38EBe18DB133cEc108f4D14CE00Dd9Ae`); add more via the comma-separated `ONCHAIN_WLD_AIRDROP_SOURCES` env var.
+
+**Withdraw filter is by `receiver`, not `owner`.** Morpho's bundler contracts pull the user's vault shares via approval and call `vault.redeem(shares, receiver=user, owner=bundler)`. Filtering by `owner` misses ~95% of withdrawals.
+
+**Event walking is incremental.** Each state row stores `last_scanned_block`; subsequent ticks scan only the new ~150 blocks per 5-min cron. First-ever scan walks all ~30M blocks at 1M blocks/chunk (~6s) — public Alchemy's response-size cap is fine because the wallet/source topic filter shrinks responses to a handful of logs.
+
+The `/symbols/:sym/history` endpoint folds vault yield into the existing `earned` aggregate (alongside Binance Earn rewards) and exposes airdrop separately as `airdrop`. Web (`PriceModal`) and mobile (position screen) each render a dedicated "Airdrop received" card when non-zero.
+
+## Chart cache (price-history)
+
+`src/services/price-history.ts` warms the daily-window `prices_daily` cache for held symbols. A boot-time + nightly cron (`02:30 UTC`) calls `warmDailyHistoryBatch` for every distinct symbol in `trades` plus on-chain priced symbols. Skips symbols whose cache is already current. Result: chart-modal open is ~600ms warm vs ~15s cold.
+
+If you change the chart's default window (`CHART_HISTORY_DAYS` in `scheduler.ts`), the warm function will pick up the new range on next run.
 
 ## Mobile app (apps/mobile)
 
@@ -229,6 +285,6 @@ Active: [new session]
 Last: [first session]
 
 ## Session Continuity
-State: (no changes or facts recorded in this session segment)
+Files: apps/web/src/vite-env.d.ts, apps/web/src/api/client.ts, apps/api/package.json, .dockerignore, Dockerfile
 
 # === END COGNILAYER ===

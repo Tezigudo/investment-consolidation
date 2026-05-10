@@ -1,0 +1,37 @@
+name: Fly deploy
+
+on:
+  push:
+    branches: [main]
+    # Skip the workflow when only Cloudflare-side, mobile-only, or
+    # pure-tooling changes ship — Fly only builds and ships the API.
+    paths:
+      - 'apps/api/**'
+      - 'packages/shared/**'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'fly.toml'
+      - 'package.json'
+      - 'bun.lock'
+      - 'apps/web/package.json'
+      - 'apps/mobile/package.json'
+      - '.github/workflows/fly-deploy.yml'
+  workflow_dispatch: {}
+
+# A second push to main while a deploy is mid-flight cancels the
+# in-flight one — Fly always ships the latest commit, never a stale one.
+concurrency:
+  group: fly-deploy-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy API to Fly
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: flyctl deploy
+        run: flyctl deploy -a investment-consolidation
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

@@ -143,11 +143,13 @@ async function fetchStockDaily(symbol: string, days: number): Promise<{ day: num
   }
 }
 
-async function buildSeries(
+// Cache-and-fill series build, no live-price overlay. Caller can splice
+// today's live price into the last point once it's available — this
+// split lets the route parallelize getPrice() with the cache read.
+async function buildSeriesNoOverlay(
   symbol: string,
   kind: 'stock' | 'crypto',
   days: number,
-  todayUSD: number,
 ): Promise<{ t: number; price: number }[]> {
   const today = todayDayStart();
   const fromDay = today - (days - 1) * ONE_DAY;
@@ -206,9 +208,6 @@ async function buildSeries(
     if (last != null) series.push({ t: d, price: last });
   }
 
-  // 4. Override the final point with today's live price so chart matches the dashboard.
-  if (todayUSD > 0 && series.length) series[series.length - 1] = { t: today, price: todayUSD };
-
   return series;
 }
 
@@ -249,29 +248,37 @@ export async function symbolRoutes(app: FastifyInstance) {
       { qty: 0, valueUSD: 0, valueTHB: 0, count: 0, firstTs: 0, lastTs: 0 },
     );
 
-    const todayUSD = await getPrice(sym, kind);
+    // Run independent reads concurrently. getPrice is sometimes the long
+    // pole on a cold cache (live network call to Yahoo / Binance), so
+    // splitting it from the on-chain lookups + cache read shaves the
+    // tail latency. buildSeries needs todayUSD for its final-point
+    // override, so we kick off the cache read in parallel and overlay
+    // todayUSD when both finish.
+    const [todayUSD, onchain, airdropAgg, fxNow, seriesSeed] = await Promise.all([
+      getPrice(sym, kind),
+      readOnchainEarnForSymbol(sym),
+      readOnchainAirdropForSymbol(sym),
+      getUSDTHB(),
+      buildSeriesNoOverlay(sym, kind, n),
+    ]);
 
-    const onchain = await readOnchainEarnForSymbol(sym);
     if (onchain && onchain.qty > 0) {
-      const fx = todayUSD > 0 ? await getUSDTHB() : null;
       const valueUSD = onchain.qty * todayUSD;
       earned.qty += onchain.qty;
       earned.valueUSD += valueUSD;
-      earned.valueTHB += fx ? valueUSD * fx.rate : 0;
+      earned.valueTHB += todayUSD > 0 ? valueUSD * fxNow.rate : 0;
       earned.count += onchain.vaultCount;
     }
 
-    const airdropAgg = await readOnchainAirdropForSymbol(sym);
     let airdrop:
       | { qty: number; valueUSD: number; valueTHB: number; count: number; sources: number; firstTs: number; lastTs: number }
       | null = null;
     if (airdropAgg && airdropAgg.qty > 0) {
-      const fx = todayUSD > 0 ? await getUSDTHB() : null;
       const valueUSD = airdropAgg.qty * todayUSD;
       airdrop = {
         qty: airdropAgg.qty,
         valueUSD,
-        valueTHB: fx ? valueUSD * fx.rate : 0,
+        valueTHB: todayUSD > 0 ? valueUSD * fxNow.rate : 0,
         count: airdropAgg.count,
         sources: airdropAgg.sources,
         firstTs: airdropAgg.firstTs,
@@ -279,7 +286,12 @@ export async function symbolRoutes(app: FastifyInstance) {
       };
     }
 
-    const series = await buildSeries(sym, kind, n, todayUSD);
+    // Apply today's live price to the last point of the series. Done here
+    // so buildSeriesNoOverlay can run before getPrice resolves.
+    const series = seriesSeed.slice();
+    if (todayUSD > 0 && series.length) {
+      series[series.length - 1] = { t: series[series.length - 1].t, price: todayUSD };
+    }
 
     return {
       symbol: sym,

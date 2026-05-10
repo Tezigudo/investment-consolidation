@@ -39,10 +39,15 @@ export function PositionSheet({ position, currency, usdthb, costView, onClose }:
   const [range, setRange] = useState<Range>('6M');
   const kind = position.platform === 'DIME' ? 'stock' : 'crypto';
 
+  // Fetch the widest window (1Y) once per session and slice client-side
+  // for range buttons. Avoids a fresh round-trip on every range tap, which
+  // on Fly's auto-suspending free machine can stack 5–15 s if the symbol's
+  // prices_daily cache is cold. Mirrors the desktop HeroHistoryChart's
+  // single-fetch pattern.
   const { data } = useQuery({
-    queryKey: ['symbol-history', position.symbol, kind, RANGE_DAYS[range]],
-    queryFn: () => api.symbolHistory(position.symbol, { days: RANGE_DAYS[range], kind }),
-    staleTime: 60_000,
+    queryKey: ['symbol-history', position.symbol, kind],
+    queryFn: () => api.symbolHistory(position.symbol, { days: 365, kind }),
+    staleTime: 5 * 60_000,
   });
 
   // Lock body scroll while sheet is open. Esc / hardware back close it.
@@ -59,7 +64,13 @@ export function PositionSheet({ position, currency, usdthb, costView, onClose }:
     };
   }, [onClose]);
 
-  const series = data?.series ?? [];
+  const fullSeries = data?.series ?? [];
+  // Slice the series for the active range. Series is daily, sorted ascending,
+  // so taking the tail is exact for the requested window.
+  const series = useMemo(() => {
+    if (!fullSeries.length) return fullSeries;
+    return fullSeries.slice(-RANGE_DAYS[range]);
+  }, [fullSeries, range]);
   const allTrades = (data?.trades ?? []) as Trade[];
   const inTHB = currency === 'THB';
   const toDisplay = (usd: number) => (inTHB ? usd * usdthb : usd);
@@ -67,15 +78,22 @@ export function PositionSheet({ position, currency, usdthb, costView, onClose }:
     inTHB ? fmtTHB(toDisplay(usd), { dp: usd < 10 ? 2 : 0 }) : fmtUSD(usd, { dp: usd < 10 ? 3 : 2 });
 
   const prices = series.map((s) => s.price);
+  const hasSeries = prices.length > 0;
   const first = prices[0] ?? 0;
-  const last = prices[prices.length - 1] ?? 0;
-  const change = last - first;
-  const changePct = first > 0 ? (change / first) * 100 : 0;
+  // Fall back to position.priceUSD when the chart series hasn't loaded yet —
+  // otherwise "Holding value" reads ฿0 even though /portfolio already knows
+  // the live price.
+  const last = prices[prices.length - 1] ?? position.priceUSD ?? 0;
+  // change / min / max only make sense when the series is loaded; otherwise
+  // show "—" instead of fake zeros (was misleading: ฿0 high/low/change while
+  // PNL shows +฿182).
+  const change = hasSeries ? last - first : 0;
+  const changePct = hasSeries && first > 0 ? (change / first) * 100 : 0;
   const prevPrice = prices.length >= 2 ? prices[prices.length - 2] : last;
-  const dayChange = last - prevPrice;
-  const dayChangePct = prevPrice > 0 ? (dayChange / prevPrice) * 100 : 0;
-  const min = prices.length ? Math.min(...prices) : 0;
-  const max = prices.length ? Math.max(...prices) : 0;
+  const dayChange = hasSeries ? last - prevPrice : 0;
+  const dayChangePct = hasSeries && prevPrice > 0 ? (dayChange / prevPrice) * 100 : 0;
+  const min = hasSeries ? Math.min(...prices) : 0;
+  const max = hasSeries ? Math.max(...prices) : 0;
   const holdingUSD = position.qty * last;
 
   const realizedUSD = data?.realizedUSD ?? 0;
@@ -217,22 +235,26 @@ export function PositionSheet({ position, currency, usdthb, costView, onClose }:
           >
             {fmt(last)}
           </div>
-          <div style={{ fontFamily: 'var(--mono)', fontSize: 13, color }}>
-            {change >= 0 ? '+' : '−'}
-            {fmt(Math.abs(change)).replace(/^[−-]/, '')}
-          </div>
-          <div
-            style={{
-              fontFamily: 'var(--mono)',
-              fontSize: 11,
-              padding: '2px 7px',
-              borderRadius: 4,
-              color,
-              background: change >= 0 ? 'var(--up-bg)' : 'var(--down-bg)',
-            }}
-          >
-            {range} {fmtPct(changePct)}
-          </div>
+          {hasSeries && (
+            <>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 13, color }}>
+                {change >= 0 ? '+' : '−'}
+                {fmt(Math.abs(change)).replace(/^[−-]/, '')}
+              </div>
+              <div
+                style={{
+                  fontFamily: 'var(--mono)',
+                  fontSize: 11,
+                  padding: '2px 7px',
+                  borderRadius: 4,
+                  color,
+                  background: change >= 0 ? 'var(--up-bg)' : 'var(--down-bg)',
+                }}
+              >
+                {range} {fmtPct(changePct)}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Chart */}
@@ -293,12 +315,16 @@ export function PositionSheet({ position, currency, usdthb, costView, onClose }:
             borderRadius: 12,
           }}
         >
-          <Stat label="Period high" value={fmt(max)} />
-          <Stat label="Period low" value={fmt(min)} />
+          <Stat label="Period high" value={hasSeries ? fmt(max) : '—'} />
+          <Stat label="Period low" value={hasSeries ? fmt(min) : '—'} />
           <Stat
             label="1D change"
-            value={`${dayChange >= 0 ? '+' : '−'}${fmt(Math.abs(dayChange))} (${fmtPct(dayChangePct)})`}
-            color={dayChange >= 0 ? 'var(--up)' : 'var(--down)'}
+            value={
+              hasSeries
+                ? `${dayChange >= 0 ? '+' : '−'}${fmt(Math.abs(dayChange))} (${fmtPct(dayChangePct)})`
+                : '—'
+            }
+            color={hasSeries ? (dayChange >= 0 ? 'var(--up)' : 'var(--down)') : undefined}
           />
           <Stat label={isDimeView ? 'Your avg (DIME)' : 'Your avg'} value={fmt(avgShown)} muted />
           <Stat label="Holding value" value={fmt(holdingUSD)} />

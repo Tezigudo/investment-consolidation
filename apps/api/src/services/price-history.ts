@@ -126,14 +126,24 @@ export async function warmDailyHistory(symbol: string, kind: 'stock' | 'crypto',
     [symbol, dateKey(fromDay), dateKey(today)],
   );
   let latestCachedDay = 0;
+  let earliestCachedDay = Number.POSITIVE_INFINITY;
   for (const r of rows) {
     const d = Date.parse(r.date);
-    if (Number.isFinite(d) && d > latestCachedDay) latestCachedDay = d;
+    if (!Number.isFinite(d)) continue;
+    if (d > latestCachedDay) latestCachedDay = d;
+    if (d < earliestCachedDay) earliestCachedDay = d;
   }
   const yesterday = today - ONE_DAY;
   const isCold = rows.length < days * 0.3;
   const isStale = latestCachedDay > 0 && yesterday - latestCachedDay > STALE_DAYS * ONE_DAY;
-  if (!isCold && !isStale) return false;
+  // Coverage check: even if rows.length passes the cold threshold, the
+  // window may start later than fromDay (e.g. CHART_HISTORY_DAYS bumped
+  // 180→365 — symbols with 180 days cached register as "warm" by the
+  // ratio test but have nothing for the older half of the window). Force
+  // a refetch so the freshly-requested range fills.
+  const missingHead =
+    rows.length > 0 && earliestCachedDay - fromDay > STALE_DAYS * ONE_DAY;
+  if (!isCold && !isStale && !missingHead) return false;
 
   const fresh = kind === 'crypto'
     ? await fetchCryptoDailyWindow(symbol, fromDay, today)

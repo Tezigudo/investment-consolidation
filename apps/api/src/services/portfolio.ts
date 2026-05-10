@@ -1,5 +1,6 @@
 import { pool } from '../db/client.js';
 import { fetchBinancePositions } from './binance.js';
+import { isStable } from './binance-stables.js';
 import { refreshPrices, getCachedPrices } from './prices.js';
 import { getUSDTHB } from './fx.js';
 import { aggregateTrades, aggregateTradesFIFO } from './cost-basis.js';
@@ -186,12 +187,25 @@ async function upsertPosition(p: EnrichedPosition): Promise<void> {
 }
 
 // Expensive — calls Binance. Only from cron / explicit refresh.
+//
+// Stablecoins are NOT written as crypto positions. They're treated as
+// USD-equivalent cash: every stable asset's balance contributes to a
+// single synthesized "Binance USDT cash" row (symbol='USDT', sector=
+// 'Cash'). The deposits ledger carries the FX-locked principal that
+// funded the cash; the cash row itself is cost==market so it doesn't
+// drag PNL up or down. Mirrors buildDimeCashRow's "no FX gain on idle
+// USD" choice — see project_realized_pnl.md.
 export async function refreshBinance(marketFX: number): Promise<EnrichedPosition[]> {
   const live = await fetchBinancePositions();
   const tradeMap = await tradesBySymbol('Binance');
   const out: EnrichedPosition[] = [];
+  let stableUSD = 0;
   for (const pos of live) {
     if (pos.qty <= 0 || pos.priceUSD <= 0) continue;
+    if (isStable(pos.asset)) {
+      stableUSD += pos.qty * pos.priceUSD;
+      continue;
+    }
     const trades = tradeMap.get(pos.asset) ?? [];
     const agg = aggregateTrades(trades);
     const qty = pos.qty;
@@ -212,6 +226,24 @@ export async function refreshBinance(marketFX: number): Promise<EnrichedPosition
     });
     await upsertPosition(enriched);
     out.push(enriched);
+  }
+
+  if (stableUSD > 0.005) {
+    const cash = enrich({
+      platform: 'Binance',
+      symbol: 'USDT',
+      qty: stableUSD,
+      avgUSD: 1,
+      priceUSD: 1,
+      costTHB: stableUSD * marketFX,
+      marketFX,
+      meta: { name: 'Binance USDT cash', sector: 'Cash' },
+    });
+    await upsertPosition(cash);
+    out.push(cash);
+  } else {
+    // Balance went to zero — clear any prior synth row so it doesn't linger.
+    await pool.query("DELETE FROM positions WHERE platform = 'Binance' AND symbol = 'USDT'");
   }
   return out;
 }
@@ -341,9 +373,32 @@ async function readBinancePositionsFromDb(
   const { rows } = await pool.query<PositionRow>(
     "SELECT * FROM positions WHERE platform = 'Binance'",
   );
-  const priceMap = await getCachedPrices(rows.map((p) => p.symbol));
+  // Stable rows are the synthesized cash row from refreshBinance — they
+  // have no trade history (USDT is a quote asset, not a base) so we
+  // skip the price/trade lookups entirely.
+  const cryptoSymbols = rows.filter((p) => !isStable(p.symbol)).map((p) => p.symbol);
+  const priceMap = await getCachedPrices(cryptoSymbols);
   const out: EnrichedPosition[] = [];
   for (const p of rows) {
+    if (isStable(p.symbol)) {
+      // costTHB recomputed at live FX every read so cost==market holds
+      // between cron ticks. Reading p.cost_basis_thb (frozen at last
+      // refresh) against the live marketFX would produce phantom
+      // fxContribTHB inside enrich().
+      out.push(
+        enrich({
+          platform: 'Binance',
+          symbol: p.symbol,
+          qty: p.qty,
+          avgUSD: 1,
+          priceUSD: 1,
+          costTHB: p.qty * marketFX,
+          marketFX,
+          meta: { name: 'Binance USDT cash', sector: 'Cash' },
+        }),
+      );
+      continue;
+    }
     const cached = priceMap.get(p.symbol);
     const priceUSD = cached?.price_usd ?? p.avg_cost_usd;
     const agg = aggregateTrades(tradeMap.get(p.symbol) ?? []);

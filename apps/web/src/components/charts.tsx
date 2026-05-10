@@ -20,7 +20,9 @@ interface AreaProps<T> {
   pickY: (d: T) => number;
   color: string;
   gradId: string;
-  height?: number;
+  // number → fixed pixel height. 'auto' → fill parent (parent must have a
+  // defined height; the chart measures its container with a ResizeObserver).
+  height?: number | 'auto';
   fill?: boolean;
   formatY?: (d: T) => string;
   onHover?: (i: number | null) => void;
@@ -37,10 +39,11 @@ export function AreaChart<T>({
   onHover,
 }: AreaProps<T>) {
   const ref = useRef<HTMLDivElement>(null);
-  const { w } = useSize(ref);
+  const { w, h: measuredH } = useSize(ref);
   const [hover, setHover] = useState<{ i: number; x: number; y: number } | null>(null);
   const pad = { t: 16, r: 12, b: 24, l: 12 };
-  const H = height;
+  const fluid = height === 'auto';
+  const H = fluid ? measuredH : height;
   const values = data.map(pickY);
   const min = Math.min(...values);
   const max = Math.max(...values);
@@ -74,14 +77,14 @@ export function AreaChart<T>({
   return (
     <div
       ref={ref}
-      style={{ position: 'relative', width: '100%', height: H }}
+      style={{ position: 'relative', width: '100%', height: fluid ? '100%' : H, minHeight: 0 }}
       onMouseMove={handleMove}
       onMouseLeave={() => {
         setHover(null);
         onHover?.(null);
       }}
     >
-      {w > 0 && (
+      {w > 0 && H > 0 && (
         <svg width={w} height={H} style={{ display: 'block', overflow: 'visible' }}>
           <defs>
             <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">

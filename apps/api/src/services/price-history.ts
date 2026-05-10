@@ -141,8 +141,16 @@ export async function warmDailyHistory(symbol: string, kind: 'stock' | 'crypto',
   // 180→365 — symbols with 180 days cached register as "warm" by the
   // ratio test but have nothing for the older half of the window). Force
   // a refetch so the freshly-requested range fills.
+  //
+  // Crypto only: Yahoo's chart endpoint (used for stocks) snaps to its
+  // own range buckets and tops out at ~344 calendar days for range=1y
+  // (252 trading days + weekends). Applying this check to stocks would
+  // cause every warm cycle to refetch forever since the gap can never
+  // close.
   const missingHead =
-    rows.length > 0 && earliestCachedDay - fromDay > STALE_DAYS * ONE_DAY;
+    kind === 'crypto' &&
+    rows.length > 0 &&
+    earliestCachedDay - fromDay > STALE_DAYS * ONE_DAY;
   if (!isCold && !isStale && !missingHead) return false;
 
   const fresh = kind === 'crypto'

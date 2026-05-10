@@ -4,8 +4,6 @@ node_modules
 apps/web/dist
 apps/api/dist
 apps/api/data
-apps/mobile
-!apps/mobile/package.json
 secrets
 *.dump
 *.tar
@@ -15,6 +13,3 @@ secrets
 *.pdf
 .env
 .env.local
-.expo
-ios
-android

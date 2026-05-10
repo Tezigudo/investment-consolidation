@@ -8,6 +8,7 @@ import { importBinanceHistory, isBinanceSyncSeeded } from '../services/binance-i
 import { refreshDailyUSDTHB } from '../services/fx-history.js';
 import { refreshOnChainWLD } from '../services/onchain.js';
 import { warmDailyHistoryBatch } from '../services/price-history.js';
+import { captureSnapshotNow, snapshotCount, backfillSnapshots } from '../services/portfolio-history.js';
 
 // Symbols held on-chain that need a USDT price even though we never
 // trade them through Binance. Keeps the crypto price refresh aware of
@@ -144,6 +145,39 @@ export function startJobs() {
   cron.schedule('30 2 * * *', () => {
     void warmDailyChartCache();
   });
+
+  // Capture today's portfolio snapshot every 6 hours so the chart's
+  // last point stays current within the day. Daily UTC snapshot row is
+  // upserted (not appended), so over-frequent runs are fine.
+  cron.schedule('0 */6 * * *', async () => {
+    try {
+      const s = await captureSnapshotNow();
+      console.log(`[jobs] portfolio snapshot ${s.date}: ${s.marketTHB.toFixed(0)} THB`);
+    } catch (e) {
+      console.warn('[jobs] portfolio snapshot failed:', (e as Error).message);
+    }
+  });
+
+  // Lazy backfill on boot if the snapshots table is empty. After this,
+  // the daily cron carries it forward; the API's /portfolio/history
+  // endpoint also self-heals on cold cache.
+  void (async () => {
+    try {
+      if ((await snapshotCount()) < 2) {
+        console.log('[jobs] portfolio snapshots empty — running backfill with deep price warm (one-time)…');
+        const r = await backfillSnapshots({ deepWarmPrices: true });
+        console.log(
+          `[jobs] portfolio snapshot backfill: +${r.inserted} inserted, ${r.updated} updated, ${r.days} days`,
+        );
+      } else {
+        // Always capture *today* on boot so the latest point is fresh
+        // even if the 6h cron hasn't fired in this process yet.
+        await captureSnapshotNow();
+      }
+    } catch (e) {
+      console.warn('[jobs] snapshot warm-up failed:', (e as Error).message);
+    }
+  })();
 
   // FX every hour (live + daily series tail)
   cron.schedule('0 * * * *', async () => {

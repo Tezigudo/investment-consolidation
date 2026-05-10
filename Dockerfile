@@ -1,5 +1,5 @@
 # Multi-stage Dockerfile for the API only — web ships to Cloudflare
-# Pages, mobile is Expo Go on the user's phone, so neither is built here.
+# Pages so it isn't built here.
 #
 # We build inside a Bun image (matches the dev environment) but RUN
 # under Node, because the production runtime command in apps/api is
@@ -14,12 +14,11 @@ COPY package.json bun.lock ./
 COPY apps/api/package.json apps/api/
 COPY packages/shared/package.json packages/shared/
 COPY apps/web/package.json apps/web/
-COPY apps/mobile/package.json apps/mobile/
 
 # Install all workspaces (web is needed because it's referenced by the
-# root, but we won't ship its build artifact). Mobile is gitignored so
-# never enters the image. Native modules: the alpine image has python +
-# build tools available out of the box, so node-gyp succeeds.
+# root, but we won't ship its build artifact). Native modules: the
+# alpine image has python + build tools available out of the box, so
+# node-gyp succeeds.
 RUN bun install --frozen-lockfile
 
 # Now copy the actual source for the workspaces we ship.

@@ -15,9 +15,10 @@ import { captureSnapshotNow, snapshotCount, backfillSnapshots } from '../service
 // off-exchange holdings so the dashboard always has a fresh quote.
 const ONCHAIN_PRICED_SYMBOLS = ['WLD'];
 
-// 180d matches the chart endpoint's default. Warmer windows == longer
-// upstream calls; 180 keeps each backfill under ~1.5s for crypto.
-const CHART_HISTORY_DAYS = 180;
+// 365 days so the mobile PositionSheet's 1Y range stays cache-hot.
+// Boot-warm is fire-and-forget — sequential klines calls cost ~2s per
+// held symbol; storage in prices_daily is a few KB per asset.
+const CHART_HISTORY_DAYS = 365;
 
 let started = false;
 

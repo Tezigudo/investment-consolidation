@@ -65,7 +65,14 @@ async function fetchCryptoDailyWindow(asset: string, fromDay: number, toDay: num
 }
 
 async function fetchStockDailyWindow(symbol: string, days: number): Promise<{ day: number; price: number }[]> {
-  const range = days <= 30 ? '1mo' : days <= 90 ? '3mo' : days <= 180 ? '6mo' : '1y';
+  const range =
+    days <= 30 ? '1mo'
+    : days <= 90 ? '3mo'
+    : days <= 180 ? '6mo'
+    : days <= 365 ? '1y'
+    : days <= 730 ? '2y'
+    : days <= 1825 ? '5y'
+    : 'max';
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=1d`;
   try {
     const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (consolidate-dashboard)' } });

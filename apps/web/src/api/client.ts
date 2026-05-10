@@ -1,5 +1,85 @@
 import type { PortfolioSnapshot, TradeRow, ImportSummary, Platform } from '@consolidate/shared';
 
+export interface DepositRow {
+  id: number;
+  platform: Platform;
+  amount_thb: number;
+  amount_usd: number;
+  fx_locked: number;
+  ts: number;
+  note: string | null;
+  source: string | null;
+}
+
+export interface DepositSummary {
+  totalTHB: number;
+  totalUSD: number;
+  weightedFX: number;
+  currentFX: number;
+  fxBaselineDeltaUSD: number;
+  count: number;
+  byPlatform: Record<string, { totalTHB: number; totalUSD: number; count: number }>;
+  firstTs: number | null;
+  lastTs: number | null;
+}
+
+export interface DepositsResponse {
+  rows: DepositRow[];
+  summary: DepositSummary;
+}
+
+export interface IncomeBucket {
+  month: string;             // YYYY-MM
+  earnUSD: number;
+  vaultUSD: number;
+  airdropUSD: number;
+  divUSD: number;
+  totalUSD: number;
+}
+
+export interface IncomeBreakdown {
+  earnUSD: number;
+  vaultUSD: number;
+  airdropUSD: number;
+  divUSD: number;
+}
+
+export interface IncomeResponse {
+  totalUSD: number;
+  totalTHB: number;
+  ytdUSD: number;
+  ytdTHB: number;
+  trailing12moUSD: number;
+  capitalInvestedUSD: number;
+  yieldOnCapitalPct: number;     // trailing 12mo / capital invested × 100
+  byKind: IncomeBreakdown;
+  byMonth: IncomeBucket[];
+  currentFX: number;
+}
+
+export interface PortfolioHistoryPoint {
+  date: string;              // YYYY-MM-DD
+  ts: number;                // end-of-day UTC ms
+  marketUSD: number;
+  marketTHB: number;
+  costUSD: number;
+  costTHB: number;
+  pnlUSD: number;
+  pnlTHB: number;
+  fxUSDTHB: number;
+}
+
+export interface PortfolioHistoryResponse {
+  series: PortfolioHistoryPoint[];
+  // Pre-computed deltas anchored on the most recent point in series
+  deltas: {
+    today: { thb: number; usd: number; pct: number } | null;
+    week:  { thb: number; usd: number; pct: number } | null;
+    month: { thb: number; usd: number; pct: number } | null;
+    ytd:   { thb: number; usd: number; pct: number } | null;
+  };
+}
+
 export interface BinanceSyncStatus {
   enabled: boolean;
   seeded: boolean;
@@ -157,4 +237,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
     }),
+  deposits: (limit?: number) =>
+    req<DepositsResponse>(`/deposits${limit ? `?limit=${limit}` : ''}`),
+  income: (days?: number) =>
+    req<IncomeResponse>(`/income${days ? `?days=${days}` : ''}`),
+  portfolioHistory: (days?: number) =>
+    req<PortfolioHistoryResponse>(`/portfolio/history${days ? `?days=${days}` : ''}`),
 };

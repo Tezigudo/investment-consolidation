@@ -1,13 +1,17 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { usePortfolio, useTrades } from '../hooks/usePortfolio';
 import { fmtMoney, fmtPct, fmtTHB, fmtUSD } from '../lib/format';
 import { TopBar } from '../components/TopBar';
 import { DashboardSkeleton } from '../components/DashboardSkeleton';
 import { Toast } from '../components/Toast';
 import { DualHeroCell } from '../components/DualHeroCell';
-import { Donut, WinLossBar, AreaChart } from '../components/charts';
+import { Donut, WinLossBar } from '../components/charts';
 import { PriceModal } from '../components/PriceModal';
 import { CsvUpload } from '../components/CsvUpload';
+import { FxScenario } from '../components/FxScenario';
+import { DepositsLedger } from '../components/DepositsLedger';
+import { IncomeCenter } from '../components/IncomeCenter';
+import { HeroHistoryChart, DeltaStrip, usePortfolioHistory } from '../components/HeroHistoryChart';
 import type { Currency, EnrichedPosition, TradeRow } from '@consolidate/shared';
 
 interface Props {
@@ -30,28 +34,12 @@ const SECTOR_COLORS: Record<string, string> = {
 export function Dashboard({ currency, setCurrency, privacy }: Props) {
   const { data: snap, isLoading, error } = usePortfolio();
   const { data: trades } = useTrades();
+  const { data: history } = usePortfolioHistory();
   const [selected, setSelected] = useState<EnrichedPosition | null>(null);
   const [filter, setFilter] = useState<'All' | 'DIME' | 'Binance' | 'OnChain'>('All');
   const [costView, setCostView] = useState<'standard' | 'dime'>('standard');
 
   const t = snap?.totals.all;
-  // Synthesize a flat baseline series for the hero chart (true history
-  // would come from a snapshots table; omitted from MVP). Indexed to today.
-  const mockSeries = useMemo(() => {
-    if (!t) return [] as { t: number; value: number }[];
-    const base = currency === 'THB' ? t.costTHB : t.costUSD;
-    const end = currency === 'THB' ? t.marketTHB : t.marketUSD;
-    const out: { t: number; value: number }[] = [];
-    const days = 60;
-    const now = Date.now();
-    for (let i = 0; i < days; i++) {
-      const p = i / (days - 1);
-      const noise = Math.sin(i * 0.5) * 0.015 + Math.sin(i * 0.17) * 0.02;
-      out.push({ t: now - (days - 1 - i) * 86400000, value: base + (end - base) * p + end * noise });
-    }
-    out[out.length - 1].value = end;
-    return out;
-  }, [currency, t?.costTHB, t?.costUSD, t?.marketTHB, t?.marketUSD]);
 
   if (error || isLoading || !snap || !t) {
     const errMsg = error ? (error as Error).message : null;
@@ -142,13 +130,11 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
               />
             </div>
             <div style={{ marginTop: 16 }}>
-              <AreaChart
-                data={mockSeries}
-                pickY={(d) => d.value}
-                color={pnlCur >= 0 ? 'var(--up)' : 'var(--down)'}
-                gradId="hero-grad"
-                height={110}
-                formatY={(d) => fmtMoney(d.value, currency, { dp: currency === 'THB' ? 0 : 2 })}
+              <HeroHistoryChart
+                currency={currency}
+                fallbackToday={{ marketTHB: t.marketTHB, marketUSD: t.marketUSD, ts: snap.asOf }}
+                pnlSign={pnlCur}
+                history={history}
               />
             </div>
           </div>
@@ -199,9 +185,13 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
                   unrealized {fmtTHB(t.pnlTHB, { sign: true })} + realized {fmtTHB(t.realizedTHB, { sign: true })}
                 </div>
               </div>
+              <FxScenario currentFX={usdthb} totals={t} bankUSD={snap.totals.bank.marketUSD} currency={currency} />
             </div>
           </div>
         </div>
+
+        {/* DELTA STRIP — Today / week / month / YTD net-worth changes */}
+        <DeltaStrip currency={currency} history={history} />
 
         {/* 2nd ROW — Allocation + Platforms + Top movers */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.2fr', gap: 16, marginBottom: 16 }}>
@@ -277,6 +267,12 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
               <WinLossBar rows={topMovers} format={(n) => fmtMoney(n, currency, { sign: true, dp: currency === 'THB' ? 0 : 2 })} />
             )}
           </div>
+        </div>
+
+        {/* DEPOSITS + INCOME — the "money in / money out" pair */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 16, marginBottom: 16 }}>
+          <DepositsLedger />
+          <IncomeCenter />
         </div>
 
         {/* HOLDINGS */}

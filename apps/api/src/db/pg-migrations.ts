@@ -210,6 +210,33 @@ export const PG_MIGRATIONS: Migration[] = [
         ON onchain_airdrop_state(symbol);
     `,
   },
+  {
+    version: 9,
+    name: 'portfolio_snapshots',
+    up: `
+      -- One row per UTC day. End-of-day mark of total portfolio value,
+      -- cost basis, and FX rate so the dashboard chart can render true
+      -- historical net-worth instead of a synthesised line.
+      --
+      -- Bank cash + on-chain holdings are folded in at *today's* value
+      -- across every historical day (constant baseline). That keeps the
+      -- chart focused on what's actually moving — tradeable position
+      -- performance plus FX — without trying to back-derive cash flows.
+      CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+        date         TEXT PRIMARY KEY,    -- YYYY-MM-DD UTC
+        ts           BIGINT NOT NULL,     -- ms since epoch (capture time)
+        market_usd   DOUBLE PRECISION NOT NULL,
+        market_thb   DOUBLE PRECISION NOT NULL,
+        cost_usd     DOUBLE PRECISION NOT NULL,
+        cost_thb     DOUBLE PRECISION NOT NULL,
+        pnl_usd      DOUBLE PRECISION NOT NULL,
+        pnl_thb      DOUBLE PRECISION NOT NULL,
+        fx_usdthb    DOUBLE PRECISION NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_ts
+        ON portfolio_snapshots(ts);
+    `,
+  },
 ];
 
 export async function runPgMigrations(pool: Pool) {

@@ -52,15 +52,17 @@ export function HeroHistoryChart({ currency, fallbackToday, pnlSign, history }: 
     fmtMoney(pickY(d), currency, { dp: currency === 'THB' ? 0 : 2 });
 
   return (
-    <div>
-      <AreaChart
-        data={series}
-        pickY={pickY}
-        color={pnlSign >= 0 ? 'var(--up)' : 'var(--down)'}
-        gradId="hero-grad"
-        height={110}
-        formatY={formatY}
-      />
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 140 }}>
+      <div style={{ flex: 1, minHeight: 110 }}>
+        <AreaChart
+          data={series}
+          pickY={pickY}
+          color={pnlSign >= 0 ? 'var(--up)' : 'var(--down)'}
+          gradId="hero-grad"
+          height="auto"
+          formatY={formatY}
+        />
+      </div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 8 }}>
         <MethodologyTip />
         <div style={{ display: 'flex', gap: 4 }}>

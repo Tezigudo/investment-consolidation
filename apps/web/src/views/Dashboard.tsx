@@ -98,7 +98,7 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
       <div style={{ maxWidth: 1240, margin: '0 auto', padding: '28px 28px 120px' }}>
         {/* TOP ROW — Hero + True PNL breakdown */}
         <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 16, marginBottom: 16 }}>
-          <div className="widget" style={{ padding: '22px 26px' }}>
+          <div className="widget" style={{ padding: '22px 26px', display: 'flex', flexDirection: 'column' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
               <div style={{ fontSize: 12, color: 'var(--muted)', letterSpacing: 0.5, textTransform: 'uppercase' }}>
                 Net worth · both currencies
@@ -129,7 +129,7 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
                 cur="USD"
               />
             </div>
-            <div style={{ marginTop: 16 }}>
+            <div style={{ marginTop: 16, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
               <HeroHistoryChart
                 currency={currency}
                 fallbackToday={{ marketTHB: t.marketTHB, marketUSD: t.marketUSD, ts: snap.asOf }}

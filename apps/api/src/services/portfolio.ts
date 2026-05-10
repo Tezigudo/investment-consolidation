@@ -381,6 +381,10 @@ async function readBinancePositionsFromDb(
   const out: EnrichedPosition[] = [];
   for (const p of rows) {
     if (isStable(p.symbol)) {
+      // costTHB recomputed at live FX every read so cost==market holds
+      // between cron ticks. Reading p.cost_basis_thb (frozen at last
+      // refresh) against the live marketFX would produce phantom
+      // fxContribTHB inside enrich().
       out.push(
         enrich({
           platform: 'Binance',
@@ -388,7 +392,7 @@ async function readBinancePositionsFromDb(
           qty: p.qty,
           avgUSD: 1,
           priceUSD: 1,
-          costTHB: p.cost_basis_thb,
+          costTHB: p.qty * marketFX,
           marketFX,
           meta: { name: 'Binance USDT cash', sector: 'Cash' },
         }),

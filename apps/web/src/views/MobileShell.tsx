@@ -32,8 +32,7 @@ export function MobileShell(props: Props) {
   const is401 = errMsg ? /\b401\b/.test(errMsg) : false;
 
   const body = (() => {
-    // Settings must always be reachable — it's where the user pastes the bearer
-    // token that fixes a 401 in the first place.
+    // Settings is hoisted above the error guard — it's where the user pastes the bearer token that fixes a 401.
     if (tab === 'settings') {
       return (
         <Settings
@@ -72,6 +71,10 @@ export function MobileShell(props: Props) {
         );
       case 'activity':
         return <Activity privacy={privacy} />;
+      default: {
+        const _exhaustive: never = tab;
+        return _exhaustive;
+      }
     }
   })();
 

@@ -253,20 +253,27 @@ export async function symbolRoutes(app: FastifyInstance) {
     // splitting it from the on-chain lookups + cache read shaves the
     // tail latency. buildSeries needs todayUSD for its final-point
     // override, so we kick off the cache read in parallel and overlay
-    // todayUSD when both finish.
-    const [todayUSD, onchain, airdropAgg, fxNow, seriesSeed] = await Promise.all([
+    // todayUSD when both finish. getUSDTHB stays out of the parallel
+    // group so DIME stock symbols never depend on FX availability —
+    // a fresh deploy with empty fx_rates and both FX upstreams down
+    // would otherwise 500 the whole route for assets that don't use FX.
+    const [todayUSD, onchain, airdropAgg, seriesSeed] = await Promise.all([
       getPrice(sym, kind),
       readOnchainEarnForSymbol(sym),
       readOnchainAirdropForSymbol(sym),
-      getUSDTHB(),
       buildSeriesNoOverlay(sym, kind, n),
     ]);
+
+    const needsFx =
+      (onchain && onchain.qty > 0 && todayUSD > 0) ||
+      (airdropAgg && airdropAgg.qty > 0 && todayUSD > 0);
+    const fxNow = needsFx ? await getUSDTHB() : null;
 
     if (onchain && onchain.qty > 0) {
       const valueUSD = onchain.qty * todayUSD;
       earned.qty += onchain.qty;
       earned.valueUSD += valueUSD;
-      earned.valueTHB += todayUSD > 0 ? valueUSD * fxNow.rate : 0;
+      earned.valueTHB += fxNow ? valueUSD * fxNow.rate : 0;
       earned.count += onchain.vaultCount;
     }
 
@@ -278,7 +285,7 @@ export async function symbolRoutes(app: FastifyInstance) {
       airdrop = {
         qty: airdropAgg.qty,
         valueUSD,
-        valueTHB: todayUSD > 0 ? valueUSD * fxNow.rate : 0,
+        valueTHB: fxNow ? valueUSD * fxNow.rate : 0,
         count: airdropAgg.count,
         sources: airdropAgg.sources,
         firstTs: airdropAgg.firstTs,

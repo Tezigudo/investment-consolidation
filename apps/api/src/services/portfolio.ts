@@ -51,6 +51,13 @@ const CRYPTO_META: Record<string, { name: string; sector: string }> = {
   DOGE: { name: 'Dogecoin', sector: 'Crypto' },
   XRP: { name: 'Ripple', sector: 'Crypto' },
   ADA: { name: 'Cardano', sector: 'Crypto' },
+  BNB: { name: 'Binance Coin', sector: 'Crypto' },
+  WLD: { name: 'Worldcoin', sector: 'Crypto' },
+  BETH: { name: 'Binance ETH (staked)', sector: 'Crypto' },
+  HOME: { name: 'Defi.app', sector: 'Crypto' },
+  LUNC: { name: 'Terra Classic', sector: 'Crypto' },
+  SHIB: { name: 'Shiba Inu', sector: 'Crypto' },
+  CRV: { name: 'Curve DAO', sector: 'Crypto' },
   USDT: { name: 'Tether', sector: 'Stable' },
   USDC: { name: 'USD Coin', sector: 'Stable' },
 };
@@ -211,7 +218,7 @@ export async function refreshBinance(marketFX: number): Promise<EnrichedPosition
     const qty = pos.qty;
     const avgUSD = agg.qty > 0 ? agg.avgUSD : pos.priceUSD;
     const costTHB = agg.qty > 0 ? agg.costTHB * (qty / agg.qty) : qty * avgUSD * marketFX;
-    const meta = CRYPTO_META[pos.asset];
+    const meta = CRYPTO_META[pos.asset] ?? { name: pos.asset, sector: 'Crypto' };
     const enriched = enrich({
       platform: 'Binance',
       symbol: pos.asset,
@@ -411,7 +418,7 @@ async function readBinancePositionsFromDb(
         priceUSD,
         costTHB: p.cost_basis_thb,
         marketFX,
-        meta: CRYPTO_META[p.symbol],
+        meta: CRYPTO_META[p.symbol] ?? { name: p.name ?? p.symbol, sector: p.sector ?? 'Crypto' },
         realizedUSD: agg.realizedUSD,
         realizedTHB: agg.realizedTHB,
       }),

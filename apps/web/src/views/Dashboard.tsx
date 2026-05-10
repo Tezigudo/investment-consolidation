@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../api/client';
 import { usePortfolio, useTrades } from '../hooks/usePortfolio';
 import { fmtMoney, fmtPct, fmtTHB, fmtUSD } from '../lib/format';
 import { TopBar } from '../components/TopBar';
@@ -91,6 +93,10 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
     .slice(0, 6)
     .map((p) => ({ sym: p.symbol, pnl: pnlOf(p) }));
 
+  const idleBinanceUSD = snap.positions.binance
+    .filter((p) => p.sector === 'Cash')
+    .reduce((acc, p) => acc + p.marketUSD, 0);
+
   return (
     <>
       <TopBar currency={currency} setCurrency={setCurrency} lastSyncMs={snap.asOf} />
@@ -140,8 +146,11 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
           </div>
 
           <div className="widget" style={{ padding: '22px 24px', display: 'flex', flexDirection: 'column' }}>
-            <div style={{ fontSize: 12, color: 'var(--muted)', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 10 }}>
-              True PNL · breakdown
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+              <div style={{ fontSize: 12, color: 'var(--muted)', letterSpacing: 0.5, textTransform: 'uppercase' }}>
+                True PNL · breakdown
+              </div>
+              <PnlMethodologyTip />
             </div>
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
@@ -184,6 +193,7 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
                 <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--muted)' }}>
                   unrealized {fmtTHB(t.pnlTHB, { sign: true })} + realized {fmtTHB(t.realizedTHB, { sign: true })}
                 </div>
+                <TwrLine twr={history?.twr} />
               </div>
               <FxScenario currentFX={usdthb} totals={t} bankUSD={snap.totals.bank.marketUSD} currency={currency} />
             </div>
@@ -253,6 +263,9 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
                         {fmtMoney(pnl, currency, { sign: true, dp: currency === 'THB' ? 0 : 2 })}
                       </div>
                     </div>
+                    {p.key === 'binance' && idleBinanceUSD > 50 && !privacy && (
+                      <IdleCashChip usd={idleBinanceUSD} usdthb={usdthb} />
+                    )}
                   </div>
                 );
               })}
@@ -269,11 +282,20 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
           </div>
         </div>
 
+        {/* RISK — Concentration + Drawdown */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+          <ConcentrationPanel positions={allPositions} totalUSD={snap.totals.all.marketUSD} currency={currency} privacy={privacy} />
+          <DrawdownPanel history={history} currency={currency} privacy={privacy} />
+        </div>
+
         {/* DEPOSITS + INCOME — the "money in / money out" pair */}
         <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 16, marginBottom: 16 }}>
           <DepositsLedger />
           <IncomeCenter />
         </div>
+
+        {/* TRADING ATTRIBUTION — humility check on past sells */}
+        <TradingAttribution currency={currency} usdthb={usdthb} privacy={privacy} />
 
         {/* HOLDINGS */}
         <div className="widget" style={{ padding: 0, marginBottom: 16 }}>
@@ -577,5 +599,405 @@ function MinimalHeader() {
     >
       <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>Consolidate</div>
     </div>
+  );
+}
+
+// Trade attribution: "what if I'd never sold?". Compares actual return
+// (current market + realized) against a buy-and-hold counterfactual.
+// Net impact reduces to sum(sellQty × (sellPrice − currentPrice)) — a
+// clean way to see whether sells got out at a top or gave up upside.
+function TradingAttribution({ currency, usdthb, privacy }: { currency: Currency; usdthb: number; privacy: boolean }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['attribution'],
+    queryFn: () => api.attribution(),
+    staleTime: 5 * 60_000,
+  });
+  if (isLoading || !data) {
+    if (error) return null;
+    return null;
+  }
+  if (data.bySymbol.length === 0) return null;
+
+  const totalUSD = data.totalImpactUSD;
+  const totalThis = currency === 'THB' ? totalUSD * usdthb : totalUSD;
+  const tone = totalUSD >= 0 ? 'var(--up)' : 'var(--down)';
+
+  const top = data.bySymbol.slice(0, 6);
+  return (
+    <div className="widget" style={{ padding: '18px 22px', marginBottom: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: 10 }}>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 600 }}>Trading attribution</div>
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
+            Actual return − "if you'd held everything" baseline. Negative = sells gave up upside.
+          </div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontFamily: 'var(--mono)', fontSize: 22, fontWeight: 500, color: tone }}>
+            {privacy ? '•••' : fmtMoney(totalThis, currency, { sign: true, dp: currency === 'THB' ? 0 : 2 })}
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--muted)' }}>net trading impact</div>
+        </div>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 10 }}>
+        {top.map((r) => {
+          const impactCur = currency === 'THB' ? r.tradingImpactUSD * usdthb : r.tradingImpactUSD;
+          const rowTone = r.tradingImpactUSD >= 0 ? 'var(--up)' : 'var(--down)';
+          return (
+            <div
+              key={`${r.platform}:${r.symbol}`}
+              style={{ background: 'var(--surface-2)', borderRadius: 6, padding: '10px 12px' }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <span style={{ fontSize: 12, fontWeight: 600 }}>{r.symbol}</span>
+                <span style={{ fontSize: 9.5, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                  {r.platform}
+                </span>
+              </div>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 14, color: rowTone, marginTop: 4 }}>
+                {privacy ? '•••' : fmtMoney(impactCur, currency, { sign: true, dp: currency === 'THB' ? 0 : 2 })}
+              </div>
+              <div style={{ fontFamily: 'var(--mono)', fontSize: 10, color: 'var(--muted)', marginTop: 2 }}>
+                sold {r.sellQty.toFixed(r.sellQty < 1 ? 4 : 2)} @ avg ≈ ${(r.avgBuyUSD).toFixed(2)} · now ${r.currentPriceUSD.toFixed(2)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Time-weighted return — strips deposit-timing from the % so it's
+// directly comparable to a benchmark. Showing YTD / 1Y / All in one
+// line keeps the True PNL block dense but readable.
+function TwrLine({ twr }: { twr?: { ytd: number | null; oneYear: number | null; all: number | null } }) {
+  const [open, setOpen] = useState(false);
+  if (!twr) return null;
+  const fmt = (v: number | null) => (v == null ? '—' : `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`);
+  const tone = (v: number | null) => (v == null ? 'var(--muted)' : v >= 0 ? 'var(--up)' : 'var(--down)');
+  return (
+    <div style={{ display: 'flex', gap: 12, marginTop: 6, fontFamily: 'var(--mono)', fontSize: 11, alignItems: 'center', position: 'relative' }}>
+      <span style={{ color: 'var(--muted)' }}>TWR</span>
+      <span><span style={{ color: 'var(--muted)' }}>YTD</span> <span style={{ color: tone(twr.ytd) }}>{fmt(twr.ytd)}</span></span>
+      <span><span style={{ color: 'var(--muted)' }}>1Y</span> <span style={{ color: tone(twr.oneYear) }}>{fmt(twr.oneYear)}</span></span>
+      <span><span style={{ color: 'var(--muted)' }}>All</span> <span style={{ color: tone(twr.all) }}>{fmt(twr.all)}</span></span>
+      <span
+        style={{ color: 'var(--muted)', cursor: 'help' }}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+      >
+        ⓘ
+      </span>
+      {open && (
+        <span
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            left: 0,
+            zIndex: 50,
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: '10px 12px',
+            width: 320,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+            fontSize: 11,
+            lineHeight: 1.5,
+            color: 'var(--text)',
+            textAlign: 'left',
+            whiteSpace: 'normal',
+            fontFamily: 'inherit',
+          }}
+        >
+          Time-weighted return chains daily portfolio returns and removes the
+          timing of new BUYs and SELLs. Lets you compare directly to "SPY
+          returned X% YTD" without deposit-timing skewing the answer.
+          <br />
+          <br />
+          Computed against the daily snapshot series in THB. Accuracy degrades
+          during windows with heavy selling because cash from sells isn't
+          held in the snapshot — best for buy-and-mostly-hold periods.
+        </span>
+      )}
+    </div>
+  );
+}
+
+// HHI (Herfindahl-Hirschman Index): sum of squared %-weights × 10000.
+// 0 = perfectly diversified, 10000 = one holding. >2500 is the conventional
+// threshold for "concentrated"; <1500 is "diversified".
+function ConcentrationPanel({
+  positions,
+  totalUSD,
+  currency,
+  privacy,
+}: {
+  positions: EnrichedPosition[];
+  totalUSD: number;
+  currency: Currency;
+  privacy: boolean;
+}) {
+  if (totalUSD <= 0 || positions.length === 0) {
+    return (
+      <div className="widget" style={{ padding: '18px 20px' }}>
+        <WidgetHeader title="Concentration" />
+        <Empty>No positions yet.</Empty>
+      </div>
+    );
+  }
+  const sorted = [...positions].sort((a, b) => b.marketUSD - a.marketUSD);
+  const weights = sorted.map((p) => p.marketUSD / totalUSD);
+  const hhi = weights.reduce((acc, w) => acc + w * w, 0) * 10000;
+  const top1 = weights[0] * 100;
+  const top3 = weights.slice(0, 3).reduce((a, w) => a + w, 0) * 100;
+  const top5 = weights.slice(0, 5).reduce((a, w) => a + w, 0) * 100;
+  const verdict =
+    hhi > 2500 ? { label: 'Concentrated', color: 'var(--down)' }
+    : hhi > 1500 ? { label: 'Moderate', color: 'oklch(0.75 0.13 80)' }
+    : { label: 'Diversified', color: 'var(--up)' };
+
+  return (
+    <div className="widget" style={{ padding: '18px 20px' }}>
+      <WidgetHeader title="Concentration" sub={`HHI ${hhi.toFixed(0)} · ${verdict.label}`} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 6 }}>
+        <ConcentrationStat label="Top 1" pct={top1} />
+        <ConcentrationStat label="Top 3" pct={top3} />
+        <ConcentrationStat label="Top 5" pct={top5} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+          {sorted.slice(0, 3).map((p) => {
+            const w = (p.marketUSD / totalUSD) * 100;
+            const v = currency === 'THB' ? p.marketTHB : p.marketUSD;
+            return (
+              <div key={`${p.platform}:${p.symbol}`} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                <span style={{ color: 'var(--muted)' }}>
+                  {p.symbol}
+                </span>
+                <span style={{ fontFamily: 'var(--mono)' }}>
+                  {w.toFixed(1)}%
+                  <span style={{ color: 'var(--muted)', marginLeft: 8 }}>
+                    {privacy ? '•••' : fmtMoney(v, currency, { dp: currency === 'THB' ? 0 : 2 })}
+                  </span>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div style={{ fontSize: 10, color: verdict.color, marginTop: 10, lineHeight: 1.5 }}>
+        {verdict.label}: HHI {hhi.toFixed(0)} (under 1500 = diversified, over 2500 = concentrated).
+      </div>
+    </div>
+  );
+}
+
+function ConcentrationStat({ label, pct }: { label: string; pct: number }) {
+  const tone = pct >= 60 ? 'var(--down)' : pct >= 40 ? 'oklch(0.75 0.13 80)' : 'var(--up)';
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, marginBottom: 3 }}>
+        <span style={{ color: 'var(--muted)' }}>{label}</span>
+        <span style={{ fontFamily: 'var(--mono)', color: tone }}>{pct.toFixed(1)}%</span>
+      </div>
+      <div style={{ height: 5, background: 'var(--surface-2)', borderRadius: 3, overflow: 'hidden' }}>
+        <div style={{ width: `${Math.min(100, pct)}%`, height: '100%', background: tone, opacity: 0.85 }} />
+      </div>
+    </div>
+  );
+}
+
+// Drawdown from running peak. We use marketTHB so THB-locals see THB-real
+// drawdowns (FX moves count). Switch series when currency toggles.
+function DrawdownPanel({
+  history,
+  currency,
+  privacy,
+}: {
+  history: ReturnType<typeof usePortfolioHistory>['data'];
+  currency: Currency;
+  privacy: boolean;
+}) {
+  const series = history?.series ?? [];
+  if (series.length < 2) {
+    return (
+      <div className="widget" style={{ padding: '18px 20px' }}>
+        <WidgetHeader title="Drawdown" />
+        <Empty>Not enough history yet — drawdown needs at least 2 daily snapshots.</Empty>
+      </div>
+    );
+  }
+
+  const pickV = (p: { marketTHB: number; marketUSD: number }) =>
+    currency === 'THB' ? p.marketTHB : p.marketUSD;
+
+  let peak = pickV(series[0]);
+  let peakAt = series[0].date;
+  let maxDD = 0;
+  let maxDDPct = 0;
+  let maxDDAt = series[0].date;
+  let maxDDFromPeak = peakAt;
+  for (const p of series) {
+    const v = pickV(p);
+    if (v > peak) {
+      peak = v;
+      peakAt = p.date;
+    }
+    const dd = peak - v;
+    const ddPct = peak > 0 ? (dd / peak) * 100 : 0;
+    if (dd > maxDD) {
+      maxDD = dd;
+      maxDDPct = ddPct;
+      maxDDAt = p.date;
+      maxDDFromPeak = peakAt;
+    }
+  }
+
+  const last = series[series.length - 1];
+  const lastV = pickV(last);
+  const currentDD = peak - lastV;
+  const currentDDPct = peak > 0 ? (currentDD / peak) * 100 : 0;
+
+  return (
+    <div className="widget" style={{ padding: '18px 20px' }}>
+      <WidgetHeader title="Drawdown" sub={`Peak ${privacy ? '•••' : fmtMoney(peak, currency, { dp: currency === 'THB' ? 0 : 2 })} on ${peakAt}`} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 8 }}>
+        <DrawdownStat
+          label="Current"
+          amount={currentDD}
+          pct={currentDDPct}
+          currency={currency}
+          privacy={privacy}
+        />
+        <DrawdownStat
+          label="Max (period)"
+          amount={maxDD}
+          pct={maxDDPct}
+          currency={currency}
+          privacy={privacy}
+          subtitle={`${maxDDFromPeak} → ${maxDDAt}`}
+        />
+      </div>
+    </div>
+  );
+}
+
+function DrawdownStat({
+  label,
+  amount,
+  pct,
+  currency,
+  privacy,
+  subtitle,
+}: {
+  label: string;
+  amount: number;
+  pct: number;
+  currency: Currency;
+  privacy: boolean;
+  subtitle?: string;
+}) {
+  const tone = pct < 0.5 ? 'var(--up)' : pct < 5 ? 'var(--muted-2)' : pct < 15 ? 'oklch(0.75 0.13 80)' : 'var(--down)';
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span style={{ fontSize: 11, color: 'var(--muted)' }}>{label}</span>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 16, color: tone }}>
+          −{pct.toFixed(2)}%
+        </span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 2 }}>
+        <span style={{ fontSize: 10, color: 'var(--muted)' }}>{subtitle ?? ''}</span>
+        <span style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--muted)' }}>
+          −{privacy ? '•••' : fmtMoney(amount, currency, { dp: currency === 'THB' ? 0 : 2 })}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// USDT sitting in Spot wallet earns 0% — Binance Earn currently offers
+// ~5% APY on flexible USDT. Surfacing this catches forgotten balances
+// before they accumulate. Threshold $50 keeps dust out.
+function IdleCashChip({ usd, usdthb }: { usd: number; usdthb: number }) {
+  const APY = 0.05;
+  const yearlyTHB = usd * APY * usdthb;
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        fontSize: 10.5,
+        color: 'var(--muted)',
+        background: 'var(--surface-2)',
+        borderRadius: 6,
+        padding: '6px 8px',
+        lineHeight: 1.45,
+      }}
+    >
+      <span style={{ color: 'var(--text)' }}>
+        ${usd.toFixed(2)} idle in Spot
+      </span>
+      {' '}— ~฿{Math.round(yearlyTHB).toLocaleString()}/yr at 5% Earn APY.
+    </div>
+  );
+}
+
+function PnlMethodologyTip() {
+  const [open, setOpen] = useState(false);
+  return (
+    <span
+      style={{ position: 'relative', display: 'inline-flex', alignItems: 'center' }}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onClick={(e) => {
+        e.stopPropagation();
+        setOpen((v) => !v);
+      }}
+    >
+      <span style={{ fontSize: 11, color: 'var(--muted)', cursor: 'help' }}>ⓘ</span>
+      {open && (
+        <span
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            right: 0,
+            zIndex: 50,
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: '12px 14px',
+            width: 360,
+            boxShadow: '0 8px 24px rgba(0,0,0,0.35)',
+            fontSize: 11,
+            lineHeight: 1.6,
+            color: 'var(--text)',
+            textAlign: 'left',
+            whiteSpace: 'normal',
+          }}
+        >
+          Every trade carries the USDTHB rate at the moment it filled. Each
+          row breaks the THB return into:
+          <br />
+          <br />
+          <b>Market PNL</b> — what your assets did in their <i>own</i>{' '}
+          currency, converted at the FX locked when you bought. Pure
+          asset-appreciation slice; FX is held flat.
+          <br />
+          <b>FX contribution</b> — what changed because the baht moved against
+          your USD-denominated cost basis. Positive means USDTHB went up since
+          you bought.
+          <br />
+          <b>Realized</b> — banked from sells. Same Market vs FX split, just
+          locked in instead of marked to market.
+          <br />
+          <b>Total THB PNL</b> = unrealized + realized. The actual baht you've
+          made or lost end-to-end.
+          <br />
+          <br />
+          The slider below previews any USDTHB level so you can see how
+          sensitive your THB net worth is to the baht.
+        </span>
+      )}
+    </span>
   );
 }

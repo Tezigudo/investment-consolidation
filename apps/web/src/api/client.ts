@@ -44,6 +44,12 @@ export interface IncomeBreakdown {
   divUSD: number;
 }
 
+export interface UnpricedIncomeEntry {
+  kind: 'vault' | 'airdrop';
+  symbol: string;
+  qty: number;
+}
+
 export interface IncomeResponse {
   totalUSD: number;
   totalTHB: number;
@@ -55,6 +61,9 @@ export interface IncomeResponse {
   byKind: IncomeBreakdown;
   byMonth: IncomeBucket[];
   currentFX: number;
+  // On-chain entries with non-zero qty but no cached USD price; surfaced
+  // so the UI can warn instead of silently zeroing them out of totals.
+  unpriced: UnpricedIncomeEntry[];
 }
 
 export interface PortfolioHistoryPoint {

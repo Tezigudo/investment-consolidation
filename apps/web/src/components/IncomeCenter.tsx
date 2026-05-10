@@ -85,6 +85,27 @@ export function IncomeCenter() {
 
       <MiniBars buckets={data.byMonth} />
 
+      {data.unpriced.length > 0 && (
+        <div
+          style={{
+            marginTop: 12,
+            padding: '8px 10px',
+            background: 'color-mix(in oklab, var(--down) 12%, transparent)',
+            border: '1px solid color-mix(in oklab, var(--down) 35%, var(--border))',
+            borderRadius: 6,
+            fontSize: 11,
+            color: 'var(--text)',
+            lineHeight: 1.45,
+          }}
+        >
+          <span style={{ color: 'var(--down)', fontWeight: 600 }}>Heads up · </span>
+          Excluded from totals (no cached price):{' '}
+          {data.unpriced
+            .map((u) => `${u.qty.toFixed(u.qty < 1 ? 4 : 2)} ${u.symbol} (${u.kind})`)
+            .join(', ')}
+        </div>
+      )}
+
       <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
         {breakdown.map((row) => {
           const pct = (row.usd / max) * 100;

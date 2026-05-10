@@ -107,10 +107,21 @@ export async function incomeRoutes(app: FastifyInstance) {
       b.totalUSD += usd;
     }
 
+    // Track entries with non-zero qty but no cached price so the UI can
+    // surface "you have X tokens of yield/airdrops but we don't have a
+    // price right now" instead of silently zeroing them out — same kind
+    // of issue PR #15's review flagged on symbols.ts.
+    const unpriced: { kind: 'vault' | 'airdrop'; symbol: string; qty: number }[] = [];
+
     for (const r of vaultRes.rows) {
+      const qty = Number(r.yield_qty);
+      if (qty <= 0) continue;
       const px = priceMap.get(r.symbol)?.price_usd ?? 0;
-      const usd = Number(r.yield_qty) * px;
-      if (usd <= 0) continue;
+      if (px <= 0) {
+        unpriced.push({ kind: 'vault', symbol: r.symbol, qty });
+        continue;
+      }
+      const usd = qty * px;
       vaultUSD += usd;
       // No event log for vault yield — drop the cumulative number into the
       // current month so it shows up *somewhere* on the timeline.
@@ -121,9 +132,14 @@ export async function incomeRoutes(app: FastifyInstance) {
     }
 
     for (const r of airdropRes.rows) {
+      const qty = Number(r.received_qty);
+      if (qty <= 0) continue;
       const px = priceMap.get(r.symbol)?.price_usd ?? 0;
-      const totalUSD = Number(r.received_qty) * px;
-      if (totalUSD <= 0) continue;
+      if (px <= 0) {
+        unpriced.push({ kind: 'airdrop', symbol: r.symbol, qty });
+        continue;
+      }
+      const totalUSD = qty * px;
       airdropUSD += totalUSD;
       const fts = r.first_ts ? Number(r.first_ts) : 0;
       const lts = r.last_ts ? Number(r.last_ts) : 0;
@@ -177,6 +193,7 @@ export async function incomeRoutes(app: FastifyInstance) {
       byKind: { earnUSD, vaultUSD, airdropUSD, divUSD },
       byMonth,
       currentFX,
+      unpriced,
     };
   });
 }

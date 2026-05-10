@@ -1,9 +1,15 @@
 // Gmail API client with one-time OAuth bootstrap.
 //
-// First run: prints an auth URL and starts a loopback HTTP server on a
-// random port to catch the redirect with the authorization code. Once
-// exchanged, the refresh token is saved to secrets/gmail-token.json and
-// every subsequent call just loads that file.
+// Two ways to provide credentials:
+//   1. File on disk (local dev): GMAIL_CREDENTIALS_PATH / GMAIL_TOKEN_PATH
+//      (default `secrets/gmail-{credentials,token}.json`). Interactive
+//      `--auth` writes the token here.
+//   2. Env-var JSON (Fly / production): GMAIL_CREDENTIALS_JSON /
+//      GMAIL_TOKEN_JSON. Either raw JSON or base64-encoded JSON. Used
+//      when you can't ship the secrets/ folder into a deploy artifact.
+//      Env vars take precedence over file paths. Read-only — the
+//      interactive auth flow still writes to the file path on the
+//      machine running `--auth` (typically your laptop).
 //
 // Scope: gmail.readonly. We only list/read messages + attachments.
 
@@ -38,6 +44,19 @@ function tokenPath(): string {
   return envPath ? resolveFromRepoRoot(envPath) : path.join(REPO_ROOT, 'secrets/gmail-token.json');
 }
 
+// Accepts raw JSON or base64-encoded JSON. Sniffs the first non-whitespace
+// char: '{' or '[' means raw, anything else triggers base64 decode.
+function parseInbandJson<T>(value: string, label: string): T {
+  const trimmed = value.trim();
+  const looksRaw = trimmed.startsWith('{') || trimmed.startsWith('[');
+  const text = looksRaw ? trimmed : Buffer.from(trimmed, 'base64').toString('utf8');
+  try {
+    return JSON.parse(text) as T;
+  } catch (e) {
+    throw new Error(`${label}: failed to parse JSON (${(e as Error).message})`);
+  }
+}
+
 interface InstalledCredentials {
   installed: {
     client_id: string;
@@ -47,10 +66,20 @@ interface InstalledCredentials {
 }
 
 function loadCredentials(): InstalledCredentials['installed'] {
+  if (config.GMAIL_CREDENTIALS_JSON) {
+    const raw = parseInbandJson<InstalledCredentials>(
+      config.GMAIL_CREDENTIALS_JSON,
+      'GMAIL_CREDENTIALS_JSON',
+    );
+    if (!raw.installed) {
+      throw new Error('GMAIL_CREDENTIALS_JSON: expected an "installed" OAuth client wrapper');
+    }
+    return raw.installed;
+  }
   const p = credentialsPath();
   if (!fs.existsSync(p)) {
     throw new Error(
-      `Gmail credentials not found at ${p}. Set GMAIL_CREDENTIALS_PATH or place the OAuth "installed" client JSON at secrets/gmail-credentials.json.`,
+      `Gmail credentials not found at ${p}. Set GMAIL_CREDENTIALS_JSON (Fly secret) or GMAIL_CREDENTIALS_PATH, or place the OAuth "installed" client JSON at secrets/gmail-credentials.json.`,
     );
   }
   const raw = JSON.parse(fs.readFileSync(p, 'utf8')) as InstalledCredentials;
@@ -61,6 +90,16 @@ function loadCredentials(): InstalledCredentials['installed'] {
 }
 
 function loadCachedToken(): Record<string, unknown> | null {
+  if (config.GMAIL_TOKEN_JSON) {
+    try {
+      return parseInbandJson<Record<string, unknown>>(
+        config.GMAIL_TOKEN_JSON,
+        'GMAIL_TOKEN_JSON',
+      );
+    } catch {
+      return null;
+    }
+  }
   const p = tokenPath();
   if (!fs.existsSync(p)) return null;
   try {
@@ -71,6 +110,10 @@ function loadCachedToken(): Record<string, unknown> | null {
 }
 
 function saveToken(token: Record<string, unknown>): void {
+  // Interactive auth runs locally — always write to the file path so the
+  // operator can `cat` it later to set the Fly secret. We never try to
+  // overwrite GMAIL_TOKEN_JSON in-place; that's an env var the deploy
+  // pipeline owns.
   const p = tokenPath();
   fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, JSON.stringify(token, null, 2), { mode: 0o600 });

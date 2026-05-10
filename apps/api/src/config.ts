@@ -29,6 +29,13 @@ const EnvSchema = z.object({
   DIME_PDF_PASSWORD: z.string().optional(),
   GMAIL_CREDENTIALS_PATH: z.string().optional(),
   GMAIL_TOKEN_PATH: z.string().optional(),
+  // In-band alternatives to *_PATH for environments where you can't ship
+  // a file (Fly, Cloudflare Workers, etc.). Hold the raw JSON contents
+  // of the OAuth client + saved refresh-token, respectively. Either raw
+  // JSON (`{...}`) or base64-encoded JSON is accepted — the loader
+  // sniffs the first non-whitespace char.
+  GMAIL_CREDENTIALS_JSON: z.string().optional(),
+  GMAIL_TOKEN_JSON: z.string().optional(),
 
   // Postgres connection string. Defaults to the docker-compose service
   // (consolidate/consolidate@127.0.0.1:5432/consolidate). Override per env.

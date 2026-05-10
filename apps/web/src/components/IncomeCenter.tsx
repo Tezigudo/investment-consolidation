@@ -42,6 +42,28 @@ export function IncomeCenter() {
     );
   }
 
+  // Trailing-twelve-months by kind, computed from the monthly buckets.
+  // The /income endpoint only returns trailing12moUSD as a single number;
+  // the breakdown is reconstructed here so we can show "Earn ฿X · Vault
+  // ฿Y · Airdrop ฿Z · Div ฿W = ฿(total) ≈ N% on capital".
+  const now = new Date();
+  const trail = new Date(now);
+  trail.setUTCMonth(trail.getUTCMonth() - 11);
+  const trailStart = trail.toISOString().slice(0, 7);
+  const ttmByKind = data.byMonth.reduce(
+    (acc, m) => {
+      if (m.month < trailStart) return acc;
+      acc.earn += m.earnUSD;
+      acc.vault += m.vaultUSD;
+      acc.airdrop += m.airdropUSD;
+      acc.div += m.divUSD;
+      return acc;
+    },
+    { earn: 0, vault: 0, airdrop: 0, div: 0 },
+  );
+  const ttmTotalUSD = ttmByKind.earn + ttmByKind.vault + ttmByKind.airdrop + ttmByKind.div;
+  const ttmTotalTHB = ttmTotalUSD * data.currentFX;
+
   const breakdown = [
     { key: 'earn', label: 'Binance Earn', usd: data.byKind.earnUSD },
     { key: 'vault', label: 'Vault yield', usd: data.byKind.vaultUSD },
@@ -53,33 +75,52 @@ export function IncomeCenter() {
 
   const max = Math.max(...breakdown.map((r) => r.usd), 1);
 
+  const ttmParts = [
+    { label: 'Earn', usd: ttmByKind.earn },
+    { label: 'Vault', usd: ttmByKind.vault },
+    { label: 'Airdrop', usd: ttmByKind.airdrop },
+    { label: 'Div', usd: ttmByKind.div },
+  ].filter((p) => p.usd > 0.5);
+
   return (
     <Wrap>
       <Header />
 
       <div style={{ marginBottom: 14 }}>
         <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 4 }}>
-          Lifetime
+          Trailing 12 months
         </div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
           <div style={{ fontFamily: 'var(--mono)', fontSize: 22, fontWeight: 500, color: 'var(--up)' }}>
-            {fmtTHB(data.totalTHB, { sign: true, dp: 0 })}
+            {fmtTHB(ttmTotalTHB, { sign: true, dp: 0 })}
           </div>
           <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--muted)' }}>
-            {fmtUSD(data.totalUSD, { dp: 0 })}
+            {fmtUSD(ttmTotalUSD, { dp: 0 })}
+            {data.yieldOnCapitalPct > 0 && (
+              <>
+                {' · '}
+                <span style={{ color: 'var(--text)' }}>
+                  ≈ {data.yieldOnCapitalPct.toFixed(2)}%
+                </span>
+                {' on capital'}
+              </>
+            )}
           </div>
         </div>
-        <div style={{ fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-          YTD {fmtTHB(data.ytdTHB, { sign: true, dp: 0 })}
-          {data.yieldOnCapitalPct > 0 && (
-            <>
-              {' · '}
-              <span style={{ color: 'var(--text)' }}>
-                {data.yieldOnCapitalPct.toFixed(2)}%
+        {ttmParts.length > 0 && (
+          <div style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--muted)', marginTop: 4 }}>
+            {ttmParts.map((p, i) => (
+              <span key={p.label}>
+                {i > 0 ? ' · ' : ''}
+                {p.label} {fmtUSD(p.usd, { dp: 0 })}
               </span>
-              {' yield on capital (TTM)'}
-            </>
-          )}
+            ))}
+          </div>
+        )}
+        <div style={{ fontFamily: 'var(--mono)', fontSize: 10.5, color: 'var(--muted)', marginTop: 4 }}>
+          Lifetime {fmtTHB(data.totalTHB, { sign: true, dp: 0 })}
+          {' · '}
+          YTD {fmtTHB(data.ytdTHB, { sign: true, dp: 0 })}
         </div>
       </div>
 

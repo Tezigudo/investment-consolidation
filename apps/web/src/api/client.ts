@@ -87,6 +87,13 @@ export interface PortfolioHistoryResponse {
     month: { thb: number; usd: number; pct: number } | null;
     ytd:   { thb: number; usd: number; pct: number } | null;
   };
+  // Time-weighted return (THB-denominated). Strips deposit timing from
+  // the headline % so it can be compared against a benchmark like SPY.
+  twr: {
+    ytd: number | null;
+    oneYear: number | null;
+    all: number | null;
+  };
 }
 
 export interface BinanceSyncStatus {
@@ -252,4 +259,24 @@ export const api = {
     req<IncomeResponse>(`/income${days ? `?days=${days}` : ''}`),
   portfolioHistory: (days?: number) =>
     req<PortfolioHistoryResponse>(`/portfolio/history${days ? `?days=${days}` : ''}`),
+  attribution: () => req<AttributionResponse>('/portfolio/attribution'),
 };
+
+export interface AttributionRow {
+  platform: string;
+  symbol: string;
+  buyQty: number;
+  sellQty: number;
+  currentQty: number;
+  avgBuyUSD: number;
+  avgSellUSD: number;
+  currentPriceUSD: number;
+  actualReturnUSD: number;
+  counterfactualReturnUSD: number;
+  tradingImpactUSD: number;
+}
+
+export interface AttributionResponse {
+  totalImpactUSD: number;
+  bySymbol: AttributionRow[];
+}

@@ -234,6 +234,9 @@ export async function symbolRoutes(app: FastifyInstance) {
 
     // Aggregate Earn rewards into one block so the client can render a
     // single "Total earned" stat instead of a wall of $0.00 rows.
+    // `count` is discrete Binance Earn payouts; `vaults` is on-chain
+    // ERC-4626 vaults emitting continuous (price-per-share) yield.
+    // They're conceptually different so the UI renders each label distinctly.
     const earned = rewardRows.reduce(
       (acc, r) => {
         const valueUSD = r.qty * r.price_usd;
@@ -245,7 +248,7 @@ export async function symbolRoutes(app: FastifyInstance) {
         if (r.ts > acc.lastTs) acc.lastTs = r.ts;
         return acc;
       },
-      { qty: 0, valueUSD: 0, valueTHB: 0, count: 0, firstTs: 0, lastTs: 0 },
+      { qty: 0, valueUSD: 0, valueTHB: 0, count: 0, vaults: 0, firstTs: 0, lastTs: 0 },
     );
 
     // Run independent reads concurrently. getPrice is sometimes the long
@@ -274,7 +277,7 @@ export async function symbolRoutes(app: FastifyInstance) {
       earned.qty += onchain.qty;
       earned.valueUSD += valueUSD;
       earned.valueTHB += fxNow ? valueUSD * fxNow.rate : 0;
-      earned.count += onchain.vaultCount;
+      earned.vaults += onchain.vaultCount;
     }
 
     let airdrop:

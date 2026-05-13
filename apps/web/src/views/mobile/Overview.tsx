@@ -55,14 +55,28 @@ export function Overview({ data, currency, setCurrency, privacy, setPrivacy }: P
   }, [allPositions, data.totals.bank.marketUSD]);
 
   const pnlOf = (p: EnrichedPosition) => (currency === 'THB' ? p.pnlTHB : p.pnlUSD);
-  const topMovers = useMemo(
-    () =>
-      [...allPositions]
-        .sort((a, b) => Math.abs(pnlOf(b)) - Math.abs(pnlOf(a)))
-        .slice(0, 6)
-        .map((p) => ({ sym: p.symbol, pnl: pnlOf(p) })),
-    [allPositions, currency]
-  );
+  // Top Movers aggregates by ticker, summing unrealized PNL (open
+  // positions) + lifetime realized PNL for that ticker. This is what
+  // makes WLD show as net ~$1.18 instead of +$72.81 — the airdrop's
+  // unrealized gain offsets against the closed-Binance realized loss.
+  // Cash rows (USDT, USD) skipped — they're not "movers".
+  const realizedBySymbol = data.realizedBySymbol ?? {};
+  const topMovers = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const p of allPositions) {
+      if (p.sector === 'Cash') continue;
+      map.set(p.symbol, (map.get(p.symbol) ?? 0) + pnlOf(p));
+    }
+    for (const [sym, r] of Object.entries(realizedBySymbol)) {
+      const add = currency === 'THB' ? r.realizedTHB : r.realizedUSD;
+      map.set(sym, (map.get(sym) ?? 0) + add);
+    }
+    return [...map.entries()]
+      .filter(([, pnl]) => Math.abs(pnl) >= (currency === 'THB' ? 1 : 0.5))
+      .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+      .slice(0, 6)
+      .map(([sym, pnl]) => ({ sym, pnl }));
+  }, [allPositions, currency, realizedBySymbol]);
 
   const idleBinanceUSD = useMemo(
     () =>

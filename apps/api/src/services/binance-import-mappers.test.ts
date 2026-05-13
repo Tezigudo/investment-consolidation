@@ -131,6 +131,77 @@ describe('mapSpotTrade', () => {
     );
     expect(out).toBeNull();
   });
+
+  // Commission unit handling. /myTrades returns commission denominated in
+  // commissionAsset; these guards ensure mapSpotTrade converts to USD
+  // BEFORE writing to the DB (otherwise cost-basis.ts mis-interprets
+  // commission as USD and inflates cost / realized loss — see migration 11).
+  it('converts base-asset commission to USD on a BUY (LUNC 0.1% fee paid in LUNC)', async () => {
+    mockedFx.mockResolvedValueOnce(34);
+    const out = await mapSpotTrade(
+      rawTrade({
+        id: 11,
+        price: '0.000078',
+        qty: '493343.86',
+        commission: '493.34386',
+        commissionAsset: 'LUNC',
+        symbol: 'LUNCUSDT',
+      }),
+      'LUNC',
+      'USDT',
+    );
+    // 493.34386 LUNC × $0.000078 ≈ $0.0385 — within rounding.
+    expect(out?.commission).toBeCloseTo(493.34386 * 0.000078, 6);
+  });
+
+  it('passes commission through unchanged when commissionAsset is a stable (SELL paid in USDT)', async () => {
+    mockedFx.mockResolvedValueOnce(34);
+    const out = await mapSpotTrade(
+      rawTrade({
+        id: 12,
+        isBuyer: false,
+        price: '0.00004236',
+        qty: '220245.76',
+        commission: '0.00932961',
+        commissionAsset: 'USDT',
+        symbol: 'LUNCUSDT',
+      }),
+      'LUNC',
+      'USDT',
+    );
+    expect(out?.commission).toBeCloseTo(0.00932961, 8);
+  });
+
+  it('converts BNB-paid commission via getPriceUSDTForTs (BNB-pay enabled)', async () => {
+    mockedFx.mockResolvedValueOnce(34);
+    mockedPrice.mockResolvedValueOnce(720); // BNB at $720
+    const out = await mapSpotTrade(
+      rawTrade({
+        id: 13,
+        commission: '0.0001', // 0.0001 BNB
+        commissionAsset: 'BNB',
+      }),
+      'BTC',
+      'USDT',
+    );
+    // 0.0001 BNB × $720 = $0.072
+    expect(out?.commission).toBeCloseTo(0.072, 6);
+  });
+
+  it('falls back to 0 when third-party commission asset has no price', async () => {
+    mockedFx.mockResolvedValueOnce(34);
+    mockedPrice.mockResolvedValueOnce(null);
+    const out = await mapSpotTrade(
+      rawTrade({
+        id: 14,
+        commission: '5',
+        commissionAsset: 'OBSCURE',
+      }),
+      'BTC',
+      'USDT',
+    );
+    expect(out?.commission).toBe(0);
+  });
 });
 
 describe('mapConvert', () => {

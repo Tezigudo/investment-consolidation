@@ -70,6 +70,12 @@ export interface PortfolioSnapshot {
     onchain: Totals;
     all: Totals;
   };
+  // Lifetime realized PNL keyed by ticker, summed across DIME + Binance.
+  // Lets the UI compute symbol-level net PNL (unrealized + realized) even
+  // when one platform fully closed the position and dropped out of
+  // `positions` — e.g. WLD: -$71.63 realized on Binance + +$72.81
+  // unrealized on OnChain = ~$1.18 net, not the misleading +$72.81 alone.
+  realizedBySymbol: Record<string, { realizedUSD: number; realizedTHB: number }>;
   asOf: number;
 }
 

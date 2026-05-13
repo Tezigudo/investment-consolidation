@@ -59,6 +59,40 @@ export async function resolvePriceUSD(
   return priceInQuote * quoteUSD;
 }
 
+// Binance's /myTrades returns `commission` denominated in `commissionAsset`,
+// not in USD. The default fee currency depends on settings: BUYs pay the
+// base asset (0.1%), SELLs pay the quote (0.1% of notional), and if BNB-pay
+// is enabled the fee comes out in BNB at a 25% discount. cost-basis.ts
+// expects commission in USD, so without conversion a BUY of 500k LUNC
+// would store a "commission" of 500 (LUNC) and book a $500 phantom cost,
+// inflating realized loss by ~$1k per closed position. Convert here.
+export async function commissionToUSD(
+  commQty: number,
+  commissionAsset: string | undefined,
+  base: string,
+  quote: string,
+  priceUSD: number,
+  ts: number,
+): Promise<number> {
+  if (!(commQty > 0)) return 0;
+  if (!commissionAsset) {
+    // Old payload — assume USD-equivalent (lossy fallback, matches prior behavior).
+    return commQty;
+  }
+  if (isStable(commissionAsset)) return commQty;
+  if (commissionAsset === base) return commQty * priceUSD;
+  if (commissionAsset === quote) {
+    // priceUSD = priceInQuote × quoteUSD ⇒ quoteUSD = priceUSD / priceInQuote.
+    // Already-stable quote was handled above; here quote is non-stable
+    // (rare — e.g. BTC quote) and we re-resolve to USD via the same path.
+    const quoteUSD = await getPriceUSDTForTs(commissionAsset, ts);
+    return quoteUSD != null ? commQty * quoteUSD : 0;
+  }
+  // Third asset (typically BNB when BNB-pay is enabled).
+  const feeAssetUSD = await getPriceUSDTForTs(commissionAsset, ts);
+  return feeAssetUSD != null ? commQty * feeAssetUSD : 0;
+}
+
 export async function mapSpotTrade(
   t: RawSpotTrade,
   base: string,
@@ -70,13 +104,21 @@ export async function mapSpotTrade(
   const priceUSD = await resolvePriceUSD(priceInQuote, quote, t.time);
   if (priceUSD == null) return null;
   const fx = await getUSDTHBForTs(t.time);
+  const commission = await commissionToUSD(
+    Number(t.commission) || 0,
+    t.commissionAsset,
+    base,
+    quote,
+    priceUSD,
+    t.time,
+  );
   return {
     symbol: base,
     side: t.isBuyer ? 'BUY' : 'SELL',
     qty,
     price_usd: priceUSD,
     fx_at_trade: fx,
-    commission: Number(t.commission) || 0,
+    commission,
     ts: t.time,
     external_id: `binance:trade:${t.id}`,
     source: 'api',

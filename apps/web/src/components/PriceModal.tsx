@@ -102,12 +102,20 @@ export function PriceModal({ position, currency, usdthb, costView, onClose }: Pr
   const unrealizedTHBShown = isDimeView
     ? position.qty * last * usdthb - position.fifoCostTHB
     : position.pnlTHB;
-  const earned = data?.earned ?? { qty: 0, valueUSD: 0, valueTHB: 0, count: 0, firstTs: 0, lastTs: 0 };
-  const hasEarned = earned.count > 0;
+  const earned = data?.earned ?? { qty: 0, valueUSD: 0, valueTHB: 0, count: 0, vaults: 0, firstTs: 0, lastTs: 0 };
+  const hasEarned = earned.qty > 0;
   const earnedNowUSD = earned.qty * last; // current mark-to-market value of accrued rewards
   const earnedNowTHB = earnedNowUSD * usdthb;
   const airdrop = data?.airdrop ?? null;
   const hasAirdrop = !!airdrop && airdrop.qty > 0;
+  const totalRewardsQty = earned.qty + (airdrop?.qty ?? 0);
+  const totalRewardsNowUSD = totalRewardsQty * last;
+  const totalRewardsNowTHB = totalRewardsNowUSD * usdthb;
+  const showTotalRewards = hasEarned && hasAirdrop;
+  const earnedSourceParts: string[] = [];
+  if (earned.count > 0) earnedSourceParts.push(`${earned.count} Earn payout${earned.count === 1 ? '' : 's'}`);
+  if (earned.vaults > 0) earnedSourceParts.push(`${earned.vaults} on-chain vault${earned.vaults === 1 ? '' : 's'}`);
+  const earnedSourceLabel = earnedSourceParts.join(' + ');
 
   // Spot trades that fall inside the visible window. Earn/reward rows
   // are excluded so chart markers only represent buy/sell decisions.
@@ -320,12 +328,20 @@ export function PriceModal({ position, currency, usdthb, costView, onClose }: Pr
               tooltip="Unrealized + Realized = market − net cash invested. Same figure DIME shows as 'Unrealized P/L' (they don't separate realized)."
             />
           )}
+          {showTotalRewards && (
+            <Stat
+              label="Total rewards"
+              value={`${totalRewardsQty.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${position.symbol}`}
+              color="var(--up)"
+              tooltip={`Combined: vault yield + airdrop. Worth ${currency === 'THB' ? fmtTHB(totalRewardsNowTHB) : fmtUSD(totalRewardsNowUSD)} at today's price. Both excluded from cost basis so PNL math stays clean.`}
+            />
+          )}
           {hasEarned && (
             <Stat
-              label="Total earned"
+              label="Earn rewards"
               value={`${earned.qty.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${position.symbol}`}
               color="var(--up)"
-              tooltip={`${earned.count} Earn payouts · worth ${currency === 'THB' ? fmtTHB(earnedNowTHB) : fmtUSD(earnedNowUSD)} at today's price (${currency === 'THB' ? fmtTHB(earned.valueTHB) : fmtUSD(earned.valueUSD)} at receipt). Excluded from cost basis so PNL math stays clean.`}
+              tooltip={`${earnedSourceLabel} · worth ${currency === 'THB' ? fmtTHB(earnedNowTHB) : fmtUSD(earnedNowUSD)} at today's price (${currency === 'THB' ? fmtTHB(earned.valueTHB) : fmtUSD(earned.valueUSD)} at receipt). Binance Earn pays out discrete reward rows; on-chain vaults accrue continuously via share-price. Both excluded from cost basis so PNL math stays clean.`}
             />
           )}
           {hasAirdrop && airdrop && (

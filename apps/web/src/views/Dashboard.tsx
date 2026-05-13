@@ -88,10 +88,25 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
   filtered.sort((a, b) => b.marketUSD - a.marketUSD);
 
   const pnlOf = (p: EnrichedPosition) => (currency === 'THB' ? p.pnlTHB : p.pnlUSD);
-  const topMovers = [...allPositions]
-    .sort((a, b) => Math.abs(pnlOf(b)) - Math.abs(pnlOf(a)))
-    .slice(0, 6)
-    .map((p) => ({ sym: p.symbol, pnl: pnlOf(p) }));
+  // Symbol-level net PNL (unrealized + lifetime realized). See the
+  // mirroring comment in mobile Overview.tsx — same logic.
+  const realizedBySymbol = snap.realizedBySymbol ?? {};
+  const topMovers = (() => {
+    const map = new Map<string, number>();
+    for (const p of allPositions) {
+      if (p.sector === 'Cash') continue;
+      map.set(p.symbol, (map.get(p.symbol) ?? 0) + pnlOf(p));
+    }
+    for (const [sym, r] of Object.entries(realizedBySymbol)) {
+      const add = currency === 'THB' ? r.realizedTHB : r.realizedUSD;
+      map.set(sym, (map.get(sym) ?? 0) + add);
+    }
+    return [...map.entries()]
+      .filter(([, pnl]) => Math.abs(pnl) >= (currency === 'THB' ? 1 : 0.5))
+      .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+      .slice(0, 6)
+      .map(([sym, pnl]) => ({ sym, pnl }));
+  })();
 
   const idleBinanceUSD = snap.positions.binance
     .filter((p) => p.sector === 'Cash')
@@ -273,7 +288,7 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
           </div>
 
           <div className="widget" style={{ padding: '18px 20px' }}>
-            <WidgetHeader title="Top movers" sub="By absolute PNL" />
+            <WidgetHeader title="Top movers" sub="Net PNL per ticker · unrealized + realized" />
             {topMovers.length === 0 ? (
               <Empty>No positions yet.</Empty>
             ) : (

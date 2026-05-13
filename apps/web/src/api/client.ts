@@ -220,7 +220,7 @@ export const api = {
       realizedTHB: number;
       realizedFxContribTHB: number;
       series: { t: number; price: number }[];
-      earned: { qty: number; valueUSD: number; valueTHB: number; count: number; firstTs: number; lastTs: number };
+      earned: { qty: number; valueUSD: number; valueTHB: number; count: number; vaults: number; firstTs: number; lastTs: number };
       airdrop: { qty: number; valueUSD: number; valueTHB: number; count: number; sources: number; firstTs: number; lastTs: number } | null;
       trades: { id: number; ts: number; side: 'BUY' | 'SELL' | 'DIV'; qty: number; price_usd: number; fx_at_trade: number; commission: number; source: string | null }[];
     }>(`/symbols/${encodeURIComponent(sym)}/history${s ? `?${s}` : ''}`);

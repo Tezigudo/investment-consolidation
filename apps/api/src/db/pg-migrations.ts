@@ -257,6 +257,70 @@ export const PG_MIGRATIONS: Migration[] = [
       DELETE FROM binance_sync_state WHERE endpoint = 'withdrawals';
     `,
   },
+  {
+    version: 11,
+    name: 'fix_binance_commission_units',
+    up: `
+      -- Binance's /myTrades returns commission denominated in the
+      -- commissionAsset (typically the base asset for BUYs). The old
+      -- importer stored that raw number into trades.commission, but
+      -- cost-basis.ts treats commission as USD — so BUYs paying 0.1% in
+      -- the base asset booked phantom cost equal to ~0.1% of qty
+      -- *interpreted as USD*. For LUNC that meant +$493 phantom cost on
+      -- one trade, which the later SELLs realized as a -$1,093 loss.
+      --
+      -- Heuristic fix: if a Binance trade's stored commission would
+      -- imply an absurd fee rate as USD (more than 5% of notional),
+      -- it's definitely denominated in the base asset; recompute it as
+      -- commQty × price_usd. Real fees are <=0.2% so this threshold is
+      -- safe — it triggers ONLY on rows whose stored value is clearly
+      -- in the wrong unit, and leaves rows already in USD untouched.
+      -- BNB-paid fees (4e-05 BNB ≈ $0.03) fall below the threshold and
+      -- stay tiny — a small under-count we accept; the importer fix
+      -- (commissionToUSD) handles them correctly going forward.
+      UPDATE trades
+      SET commission = commission * price_usd
+      WHERE platform = 'Binance'
+        AND commission > 0
+        AND price_usd > 0
+        AND qty > 0
+        AND commission > qty * price_usd * 0.05;
+    `,
+  },
+  {
+    version: 12,
+    name: 'fix_binance_commission_units_moderate',
+    up: `
+      -- Migration 11 caught catastrophic cases (LUNC-style: stored
+      -- commission > 5% of notional). But assets priced in the $0.2-$2
+      -- range (DOGE, WLD, …) had base-denominated commissions that
+      -- looked like ~0.5% fees as USD — too small to trip v11's
+      -- threshold, too big to be real. Detect them by the per-qty rate
+      -- instead: BUYs paying 0.1% in the base asset have commission/qty
+      -- equal to exactly 0.001 (or 0.00075 for BNB-pay discount). USD-
+      -- denominated commissions scale with price, so commission/qty
+      -- depends on price and rarely sits exactly in [0.00075, 0.00125].
+      --
+      -- SELL filter: Binance's SELL default is quote-asset fee (USDT
+      -- on /USDT pairs) which IS roughly USD, so SELLs aren't affected.
+      -- Restricting to BUYs avoids false-corrections on quote-denom rows.
+      --
+      -- Notional > $1 guard: dust trades make the per-qty ratio noisy.
+      --
+      -- Idempotent: rows already in USD have commission/qty = 0.001 × price,
+      -- which only falls inside [0.00075, 0.00125] when price ≈ $1, in
+      -- which case multiplying by price is ~a no-op anyway.
+      UPDATE trades
+      SET commission = commission * price_usd
+      WHERE platform = 'Binance'
+        AND side = 'BUY'
+        AND commission > 0
+        AND price_usd > 0
+        AND qty > 0
+        AND qty * price_usd > 1
+        AND commission / qty BETWEEN 0.00075 AND 0.00125;
+    `,
+  },
 ];
 
 export async function runPgMigrations(pool: Pool) {

@@ -108,12 +108,16 @@ export function PositionSheet({ position, currency, usdthb, costView, onClose }:
     ? position.qty * last * usdthb - position.fifoCostTHB
     : position.pnlTHB;
 
-  const earned = data?.earned ?? { qty: 0, valueUSD: 0, valueTHB: 0, count: 0, firstTs: 0, lastTs: 0 };
-  const hasEarned = earned.count > 0;
+  const earned = data?.earned ?? { qty: 0, valueUSD: 0, valueTHB: 0, count: 0, vaults: 0, firstTs: 0, lastTs: 0 };
+  const hasEarned = earned.qty > 0;
   const earnedNowUSD = earned.qty * last;
   const earnedNowTHB = earnedNowUSD * usdthb;
   const airdrop = data?.airdrop ?? null;
   const hasAirdrop = !!airdrop && airdrop.qty > 0;
+  const totalRewardsQty = earned.qty + (airdrop?.qty ?? 0);
+  const totalRewardsNowUSD = totalRewardsQty * last;
+  const totalRewardsNowTHB = totalRewardsNowUSD * usdthb;
+  const hasAnyRewards = hasEarned || hasAirdrop;
 
   const tradesInRange = useMemo(() => {
     if (!series.length) return [] as Trade[];
@@ -359,13 +363,24 @@ export function PositionSheet({ position, currency, usdthb, costView, onClose }:
           )}
         </div>
 
+        {hasAnyRewards && (hasEarned ? 1 : 0) + (hasAirdrop ? 1 : 0) > 1 && (
+          <Card title="Total rewards">
+            <div style={{ fontFamily: 'var(--mono)', fontSize: 16, fontWeight: 600, color: 'var(--up)' }}>
+              {totalRewardsQty.toLocaleString('en-US', { maximumFractionDigits: 6 })} {position.symbol}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+              {currency === 'THB' ? fmtTHB(totalRewardsNowTHB) : fmtUSD(totalRewardsNowUSD)} at today's price · vault yield + airdrop combined
+            </div>
+          </Card>
+        )}
+
         {hasEarned && (
           <Card title="Earn rewards">
             <div style={{ fontFamily: 'var(--mono)', fontSize: 16, fontWeight: 600, color: 'var(--up)' }}>
               {earned.qty.toLocaleString('en-US', { maximumFractionDigits: 6 })} {position.symbol}
             </div>
             <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-              {earned.count} payouts · worth{' '}
+              {earnedSubtitle(earned)} · worth{' '}
               {currency === 'THB' ? fmtTHB(earnedNowTHB) : fmtUSD(earnedNowUSD)} now (
               {currency === 'THB' ? fmtTHB(earned.valueTHB) : fmtUSD(earned.valueUSD)} at receipt)
             </div>
@@ -391,6 +406,16 @@ export function PositionSheet({ position, currency, usdthb, costView, onClose }:
       </div>
     </div>
   );
+}
+
+// Earn-rewards subtitle: distinguishes Binance Earn discrete payouts from
+// on-chain ERC-4626 vaults (continuous yield via share-price). Either or
+// both may contribute, so the label adapts.
+function earnedSubtitle(e: { count: number; vaults: number }): string {
+  const parts: string[] = [];
+  if (e.count > 0) parts.push(`${e.count} payout${e.count === 1 ? '' : 's'}`);
+  if (e.vaults > 0) parts.push(`${e.vaults} vault${e.vaults === 1 ? '' : 's'}`);
+  return parts.length ? parts.join(' + ') : 'no payouts yet';
 }
 
 function Stat({ label, value, color, muted }: { label: string; value: string; color?: string; muted?: boolean }) {

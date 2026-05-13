@@ -501,10 +501,35 @@ export async function buildSnapshot(opts: { refresh?: boolean } = {}): Promise<P
     all: sumTotals([...dime, ...binance, ...bank, ...onchain], allRealized),
   };
 
+  const realizedBySymbol = buildRealizedBySymbol(dimeRes.tradeMap, binanceTrades);
+
   return {
     fx: { usdthb: fx.rate, ts: fx.ts },
     positions: { dime, binance, bank, onchain },
     totals,
+    realizedBySymbol,
     asOf: Date.now(),
   };
+}
+
+// Per-symbol realized PNL across all platforms, including symbols whose
+// current position is fully closed. The Top Movers widget uses this to
+// show *net* per-ticker PNL (unrealized + realized) so airdrop-only
+// positions with $0 cost basis don't read as huge "winners" when the
+// trading history on the same ticker was net negative.
+function buildRealizedBySymbol(
+  ...maps: Map<string, TradeRow[]>[]
+): Record<string, { realizedUSD: number; realizedTHB: number }> {
+  const out: Record<string, { realizedUSD: number; realizedTHB: number }> = {};
+  for (const map of maps) {
+    for (const [sym, trades] of map) {
+      const a = aggregateTrades(trades);
+      if (Math.abs(a.realizedUSD) < 0.005 && Math.abs(a.realizedTHB) < 0.5) continue;
+      const cur = out[sym] ?? { realizedUSD: 0, realizedTHB: 0 };
+      cur.realizedUSD += a.realizedUSD;
+      cur.realizedTHB += a.realizedTHB;
+      out[sym] = cur;
+    }
+  }
+  return out;
 }

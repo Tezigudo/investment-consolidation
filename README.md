@@ -29,6 +29,7 @@ investing-consolidate/
 │   │   │   │   ├── binance-history.ts  paged endpoint walkers
 │   │   │   │   ├── csv-importer.ts     DIME CSV → trades
 │   │   │   │   ├── dime-mail.ts        Gmail → DIME PDF parser → deposits + trades
+│   │   │   │   ├── bot-events.ts       External trading bot ingest + status synthesis
 │   │   │   │   ├── onchain.ts          viem reads on World Chain (balance, vaults, airdrops)
 │   │   │   │   ├── prices.ts           live USD prices (Yahoo + Binance batched)
 │   │   │   │   ├── price-history.ts    daily kline cache (prices_daily)
@@ -38,6 +39,7 @@ investing-consolidate/
 │   │   │   │   ├── symbols.ts          /symbols/:sym/history (per-position chart)
 │   │   │   │   ├── deposits.ts         /deposits ledger
 │   │   │   │   ├── income.ts           /income (Earn + vault yield + airdrops + dividends)
+│   │   │   │   ├── bot-events.ts       /bot-event ingest, /bot-status synthesis (push from external bots)
 │   │   │   │   └── trades, import, cash, dime-mail
 │   │   │   ├── jobs/scheduler.ts       cron: prices 5m, Binance 5m, FX 1h, on-chain 5m, snapshots 6h
 │   │   │   ├── cli/                    import-dime, import-binance, dime-mail
@@ -88,9 +90,10 @@ Open http://localhost:5173. The dev API binds to `0.0.0.0:4000` so a phone on th
 - **Concentration** (HHI + Top 1 / Top 3) and **Drawdown** (current + max with peak→trough dates)
 - **Deposits ledger** + **Income · TTM** (Earn / Vault / Airdrop / Dividends ≈ N% on capital)
 - **Trading attribution** — "what if I'd never sold?" counterfactual (USD only)
+- **Trading bot status** (`BotStatusCard`) — read-only health + recent events for external bots that push via `/bot-event`. Shows ALIVE / STALE / DOWN, equity, kill-switch headroom, dry-run badge, last 8 events
 - **Holdings table** with per-position drilldown to a price-history modal
 
-**Mobile** (`MobileShell.tsx`): the same React bundle, tabs (Overview / Holdings / Activity / Settings) and a `PositionSheet` drilldown. Overview mirrors the desktop analyst pack in mobile-compact form.
+**Mobile** (`MobileShell.tsx`): the same React bundle, tabs (Overview / Holdings / Activity / Settings) and a `PositionSheet` drilldown. Overview mirrors the desktop analyst pack in mobile-compact form, including the bot status card (`BotStatusMobile`) and Capital invested (`DepositsMobile`).
 
 ## The .env file — how to get each secret
 
@@ -184,6 +187,31 @@ curl -X PUT http://localhost:4000/cash \
   -d '{"platform":"KBANK","label":"Kasikorn Savings","amount_thb":184500}'
 ```
 
+### External trading bots (push-based)
+
+The API accepts a small read-only event stream from external trading bots
+(currently just `snapback-btc`, a Binance Futures bot running on a $4/mo
+DigitalOcean droplet). The bot owns its own state.db; consolidate is just
+a downstream observability log so the dashboard can show whether the bot
+is alive, what it's doing, and how much headroom is left to the
+kill-switch.
+
+```
+POST /bot-event          single event (boot, heartbeat, entry, exit,
+                         dry_run_signal, kill_switch, halt, …)
+POST /bot-event/batch    drains the bot's local outbox in one round-trip;
+                         returns 207 on partial failure so the bot keeps
+                         failed rows queued for retry
+GET  /bot-status         synthesized snapshot: health verdict, equity,
+                         kill-switch level + headroom %, recent events
+GET  /bot-events         raw paginated event log
+```
+
+Bot identity is `(source, external_id)` — UNIQUE per row so retries from
+the bot's outbox dedupe server-side. Events live in `bot_events`
+(migration 13). The bot pushes every 30s with a 3s timeout; failures
+queue locally and replay automatically. No outbound calls from the API.
+
 ## Architecture
 
 ```
@@ -202,12 +230,13 @@ curl -X PUT http://localhost:4000/cash \
 │  (viem RPC) │    │  fx_daily        │    └──────────────────┘
 └─────────────┘    │  portfolio_      │
                    │  snapshots       │
-                   │  onchain_*       │
-                   └──────────────────┘
-                         ▲
-                         │
-                   node-cron jobs
-                   (5m / 1h / 6h / nightly)
+┌─────────────┐    │  onchain_*       │
+│ snapback-btc│──▶ │  bot_events      │
+│  (DO drop.) │    └──────────────────┘
+└─────────────┘          ▲
+   push every             │
+   30s via            node-cron jobs
+   POST /bot-event   (5m / 1h / 6h / nightly)
 ```
 
 **Hot path (`GET /portfolio`)** reads exclusively from Postgres — no live outbound calls. Cron refreshes the tables (5 min for prices + Binance balances + on-chain, 1 h for FX, 6 h for portfolio snapshots, nightly for the chart-cache warm). `?refresh=1` forces a live pull on demand.
@@ -269,3 +298,4 @@ Tests cover BUY-only, partial sell, full sell + rebuy, DIV, SELL-before-BUY, and
 - **Trading attribution in THB** would need `fx_at_trade` to flow through the per-sell counterfactual math; today the metric is USD-only to avoid the spot-rate fudge.
 - **Benchmark overlay** (e.g. SPY total return on the same deposit stream) is the single highest-leverage chart still missing.
 - **Tax-aware reporting** for Thailand's 2024 foreign-source-income remittance rules — the data is all there (deposits + withdrawals + realized PNL); just needs a tile.
+- **Binance Futures trade import** — currently consolidate's Binance importer covers spot only (`/api/v3/myTrades`). When the snapback-btc bot goes live, futures fills will appear via Binance but won't carry over to the trades ledger until a `/fapi/v1/userTrades` walker lands. The bot's clientOrderId scheme (`snap-v1-<signal_id>-{e|s|t}`) is already in place so attribution will work once the walker exists.

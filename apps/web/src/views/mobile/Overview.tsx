@@ -703,7 +703,23 @@ function IncomeMobile() {
   );
   const ttmUSD = ttm.earn + ttm.vault + ttm.airdrop + ttm.div;
   const ttmTHB = ttmUSD * data.currentFX;
-  if (ttmUSD <= 0.005) return null;
+  // Lifetime income exists but the trailing 12-month bucket is empty
+  // (e.g. all earn rewards were >12mo ago and nothing new has hit).
+  // Without this guard the section silently disappears — same class of
+  // bug as the first empty-state above. Render a distinct hint so the
+  // user knows the section is intentional and just out of TTM.
+  if (ttmUSD <= 0.005) {
+    return (
+      <>
+        <div style={M.section}>Income · TTM</div>
+        <div style={{ ...M.card, color: 'var(--muted)', fontSize: 13, lineHeight: 1.5 }}>
+          No income in the last 12 months. Lifetime total{' '}
+          {fmtUSD(data.totalUSD, { dp: 0 })} sits outside the trailing
+          window.
+        </div>
+      </>
+    );
+  }
 
   const parts = [
     { label: 'Earn', usd: ttm.earn },
@@ -1097,9 +1113,13 @@ function summarizeBotEvent(ev: BotEventRow): string {
 }
 
 function BotStatusMobile() {
+  // queryKey includes the source so mobile + desktop share one cache
+  // entry (matches components/BotStatusCard.tsx) — Sourcery flagged the
+  // bare ['bot-status'] key on PR #27 review.
+  const source = 'snapback-btc';
   const { data } = useQuery({
-    queryKey: ['bot-status'],
-    queryFn: () => api.botStatus('snapback-btc'),
+    queryKey: ['bot-status', source],
+    queryFn: () => api.botStatus(source),
     refetchInterval: 30_000,
     staleTime: 25_000,
   });

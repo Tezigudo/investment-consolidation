@@ -4,7 +4,13 @@ import { AreaChart, Donut, WinLossBar } from '../../components/charts';
 import { api, type PortfolioHistoryResponse } from '../../api/client';
 import { fmtMoney, fmtPct, fmtTHB, fmtUSD } from '../../lib/format';
 import { M } from './styles';
-import type { Currency, EnrichedPosition, PortfolioSnapshot } from '@consolidate/shared';
+import type {
+  BotEventRow,
+  BotStatus,
+  Currency,
+  EnrichedPosition,
+  PortfolioSnapshot,
+} from '@consolidate/shared';
 
 interface Props {
   data: PortfolioSnapshot;
@@ -317,10 +323,16 @@ export function Overview({ data, currency, setCurrency, privacy, setPrivacy }: P
         </div>
 
         {/* Income TTM */}
+        {/* Capital invested — FX-locked deposits baseline */}
+        <DepositsMobile privacy={privacy} />
+
         <IncomeMobile />
 
         {/* Trading attribution */}
         <AttributionMobile privacy={privacy} />
+
+        {/* snapback-btc bot — read-only status pushed from the DO droplet */}
+        <BotStatusMobile />
 
         <div style={{ height: 24 }} />
       </div>
@@ -656,7 +668,21 @@ function IncomeMobile() {
     queryFn: () => api.income(),
     staleTime: 60_000,
   });
-  if (!data || data.totalUSD <= 0.005) return null;
+  // Match the desktop IncomeCenter: render an empty-state card even when
+  // there's no income yet, so mobile users see "the section exists, just
+  // no data" rather than nothing at all. The user reported income was
+  // "missing" on mobile when it was actually a silent null.
+  if (!data || data.totalUSD <= 0.005) {
+    return (
+      <>
+        <div style={M.section}>Income · TTM</div>
+        <div style={{ ...M.card, color: 'var(--muted)', fontSize: 13, lineHeight: 1.5 }}>
+          No income tracked yet. Earn rewards, dividends, and on-chain
+          yield will appear here once they hit the wallet.
+        </div>
+      </>
+    );
+  }
 
   // Anchor to the 1st of the month-11. setUTCMonth on the current day
   // overflows when day > target-month length (e.g. May 31 → April 31 →
@@ -677,7 +703,23 @@ function IncomeMobile() {
   );
   const ttmUSD = ttm.earn + ttm.vault + ttm.airdrop + ttm.div;
   const ttmTHB = ttmUSD * data.currentFX;
-  if (ttmUSD <= 0.005) return null;
+  // Lifetime income exists but the trailing 12-month bucket is empty
+  // (e.g. all earn rewards were >12mo ago and nothing new has hit).
+  // Without this guard the section silently disappears — same class of
+  // bug as the first empty-state above. Render a distinct hint so the
+  // user knows the section is intentional and just out of TTM.
+  if (ttmUSD <= 0.005) {
+    return (
+      <>
+        <div style={M.section}>Income · TTM</div>
+        <div style={{ ...M.card, color: 'var(--muted)', fontSize: 13, lineHeight: 1.5 }}>
+          No income in the last 12 months. Lifetime total{' '}
+          {fmtUSD(data.totalUSD, { dp: 0 })} sits outside the trailing
+          window.
+        </div>
+      </>
+    );
+  }
 
   const parts = [
     { label: 'Earn', usd: ttm.earn },
@@ -757,6 +799,449 @@ function AttributionMobile({ privacy }: { privacy: boolean }) {
         </div>
       </div>
     </>
+  );
+}
+
+// Capital invested ledger — mobile version of components/DepositsLedger.tsx.
+// Same 3 headline stats (total committed, weighted-avg FX with drift,
+// USD value at today's FX) + platform split bar + recent deposits list
+// styled as touch-friendly rows instead of a table.
+const DEPOSIT_PLAT_COLOR: Record<string, string> = {
+  DIME: 'var(--accent)',
+  Binance: 'var(--accent-2)',
+  OnChain: 'oklch(0.78 0.15 145)',
+  Bank: 'var(--muted-2)',
+};
+
+function DepositsMobile({ privacy }: { privacy: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const { data } = useQuery({
+    queryKey: ['deposits'],
+    queryFn: () => api.deposits(200),
+    staleTime: 60_000,
+  });
+
+  // Match desktop behavior: render the section header always so users
+  // know it exists, even when the ledger is empty.
+  if (!data) {
+    return (
+      <>
+        <div style={M.section}>Capital invested</div>
+        <div style={{ ...M.card, color: 'var(--muted)', fontSize: 13 }}>
+          Loading deposits…
+        </div>
+      </>
+    );
+  }
+
+  const { rows, summary } = data;
+  if (summary.count === 0) {
+    return (
+      <>
+        <div style={M.section}>Capital invested</div>
+        <div style={{ ...M.card, color: 'var(--muted)', fontSize: 13, lineHeight: 1.5 }}>
+          No deposits recorded. Sync DIME mail or Binance to populate
+          the FX-locked capital baseline.
+        </div>
+      </>
+    );
+  }
+
+  const fxDriftPct =
+    summary.weightedFX > 0
+      ? ((summary.currentFX - summary.weightedFX) / summary.weightedFX) * 100
+      : 0;
+  // Current FX < locked → THB strengthened against USD → user benefited
+  // (would now need fewer USD to buy the same THB back). Pure FX arithmetic;
+  // the dashboard surfaces this as a separate fxContrib component in PNL.
+  const driftFavourable = fxDriftPct < 0;
+  const ifUnconvertedUSD =
+    summary.currentFX > 0 ? summary.totalTHB / summary.currentFX : 0;
+  const platforms = Object.entries(summary.byPlatform).sort(
+    (a, b) => b[1].totalTHB - a[1].totalTHB,
+  );
+  const visibleRows = expanded ? rows : rows.slice(0, 5);
+
+  const veil = (s: string) => (privacy ? '•••' : s);
+
+  return (
+    <>
+      <div style={M.section}>Capital invested</div>
+      <div style={{ ...M.card, padding: '14px 16px' }}>
+        {/* Headline: total committed THB, big */}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{
+            fontSize: 10, color: 'var(--muted)',
+            textTransform: 'uppercase', letterSpacing: 0.5,
+          }}>
+            Total committed
+          </div>
+          <div style={{
+            fontFamily: 'var(--mono)', fontSize: 22, fontWeight: 500,
+            marginTop: 2,
+          }}>
+            {veil(fmtTHB(summary.totalTHB, { dp: 0 }))}
+          </div>
+          <div style={{
+            fontFamily: 'var(--mono)', fontSize: 11,
+            color: 'var(--muted)', marginTop: 2,
+          }}>
+            {veil(fmtUSD(summary.totalUSD, { dp: 0 }))} at lock-time FX
+          </div>
+        </div>
+
+        {/* FX drift + un-converted-today, two-up */}
+        <div style={{
+          display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12,
+          paddingTop: 12, borderTop: '1px solid var(--border)',
+        }}>
+          <div>
+            <div style={{
+              fontSize: 10, color: 'var(--muted)',
+              textTransform: 'uppercase', letterSpacing: 0.5,
+            }}>
+              Avg locked FX
+            </div>
+            <div style={{
+              fontFamily: 'var(--mono)', fontSize: 14, fontWeight: 600,
+              marginTop: 2,
+            }}>
+              {summary.weightedFX.toFixed(2)}
+            </div>
+            <div style={{
+              fontFamily: 'var(--mono)', fontSize: 10,
+              color: 'var(--muted)', marginTop: 2,
+            }}>
+              now {summary.currentFX.toFixed(2)}{' '}
+              <span style={{ color: driftFavourable ? 'var(--up)' : 'var(--down)' }}>
+                {fxDriftPct >= 0 ? '+' : '−'}
+                {Math.abs(fxDriftPct).toFixed(1)}%
+              </span>
+            </div>
+          </div>
+          <div>
+            <div style={{
+              fontSize: 10, color: 'var(--muted)',
+              textTransform: 'uppercase', letterSpacing: 0.5,
+            }}>
+              Un-converted today
+            </div>
+            <div style={{
+              fontFamily: 'var(--mono)', fontSize: 14, fontWeight: 600,
+              marginTop: 2,
+            }}>
+              {veil(fmtUSD(ifUnconvertedUSD, { dp: 0 }))}
+            </div>
+            <div style={{
+              fontFamily: 'var(--mono)', fontSize: 10,
+              color: summary.fxBaselineDeltaUSD >= 0 ? 'var(--up)' : 'var(--down)',
+              marginTop: 2,
+            }}>
+              {summary.fxBaselineDeltaUSD >= 0 ? '+' : '−'}
+              {veil(fmtUSD(Math.abs(summary.fxBaselineDeltaUSD), { dp: 0 }))} vs lock
+            </div>
+          </div>
+        </div>
+
+        {/* Platform split bar */}
+        {platforms.length > 1 && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{
+              display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden',
+            }}>
+              {platforms.map(([plat, p]) => {
+                const pct = (p.totalTHB / summary.totalTHB) * 100;
+                return (
+                  <div
+                    key={plat}
+                    style={{
+                      width: `${pct}%`,
+                      background: DEPOSIT_PLAT_COLOR[plat] ?? 'var(--muted-2)',
+                      opacity: 0.9,
+                    }}
+                  />
+                );
+              })}
+            </div>
+            <div style={{
+              display: 'flex', gap: 10, marginTop: 6,
+              flexWrap: 'wrap', fontSize: 10,
+            }}>
+              {platforms.map(([plat, p]) => (
+                <div key={plat} style={{
+                  display: 'flex', alignItems: 'center', gap: 5,
+                }}>
+                  <span style={{
+                    width: 6, height: 6, borderRadius: 2,
+                    background: DEPOSIT_PLAT_COLOR[plat] ?? 'var(--muted-2)',
+                  }} />
+                  <span>{plat}</span>
+                  <span style={{ color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+                    {((p.totalTHB / summary.totalTHB) * 100).toFixed(0)}%
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Recent deposits as touch-friendly rows (not a table) */}
+        <div style={{
+          marginTop: 14, paddingTop: 12,
+          borderTop: '1px solid var(--border)',
+        }}>
+          <div style={{
+            fontSize: 10, color: 'var(--muted)',
+            textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8,
+          }}>
+            Recent · last {visibleRows.length}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {visibleRows.map((r) => {
+              const drift =
+                r.fx_locked > 0
+                  ? ((summary.currentFX - r.fx_locked) / r.fx_locked) * 100
+                  : 0;
+              const date = new Date(Number(r.ts)).toISOString().slice(0, 10);
+              const platColor = DEPOSIT_PLAT_COLOR[r.platform] ?? 'var(--muted-2)';
+              return (
+                <div
+                  key={r.id}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '70px 56px 1fr auto',
+                    alignItems: 'center', gap: 8, fontSize: 12,
+                  }}
+                >
+                  <span style={{
+                    fontFamily: 'var(--mono)', fontSize: 10,
+                    color: 'var(--muted)',
+                  }}>
+                    {date}
+                  </span>
+                  <span style={{
+                    fontSize: 10, fontWeight: 600,
+                    background: `color-mix(in oklab, ${platColor} 16%, transparent)`,
+                    color: platColor,
+                    padding: '2px 6px', borderRadius: 4,
+                    textAlign: 'center',
+                  }}>
+                    {r.platform}
+                  </span>
+                  <span style={{
+                    fontFamily: 'var(--mono)', textAlign: 'right',
+                  }}>
+                    {veil(fmtTHB(r.amount_thb, { dp: 0 }))}
+                  </span>
+                  <span style={{
+                    fontFamily: 'var(--mono)', fontSize: 10,
+                    color: drift < 0 ? 'var(--up)' : drift > 0 ? 'var(--down)' : 'var(--muted)',
+                    minWidth: 44, textAlign: 'right',
+                  }}>
+                    {drift >= 0 ? '+' : '−'}
+                    {Math.abs(drift).toFixed(1)}%
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          {rows.length > 5 && (
+            <button
+              onClick={() => setExpanded((v) => !v)}
+              style={{
+                marginTop: 10, padding: '6px 10px', fontSize: 11,
+                background: 'transparent', border: '1px solid var(--border)',
+                color: 'var(--muted)', borderRadius: 6, cursor: 'pointer',
+                fontFamily: 'var(--mono)', width: '100%',
+              }}
+            >
+              {expanded ? 'Show recent 5' : `Show all ${rows.length}`}
+            </button>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// snapback-btc bot status — read-only push log from the DO droplet.
+// Compact mobile version of components/BotStatusCard.tsx: a single card
+// with status pill + equity + headroom + recent events list. Auto-hides
+// the bulky stat grid when there's no data yet (just shows a hint).
+const BOT_HEALTH_COLOR: Record<BotStatus['health'], string> = {
+  healthy: 'var(--up)',
+  stale: '#d4a017',
+  down: 'var(--down)',
+  unknown: 'var(--muted)',
+};
+const BOT_HEALTH_LABEL: Record<BotStatus['health'], string> = {
+  healthy: 'ALIVE',
+  stale: 'STALE',
+  down: 'DOWN',
+  unknown: 'NO DATA',
+};
+
+function fmtBotAge(seconds: number | null): string {
+  if (seconds == null) return '—';
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${(seconds / 3600).toFixed(1)}h`;
+  return `${(seconds / 86400).toFixed(1)}d`;
+}
+
+function fmtBotTs(ms: number): string {
+  return new Date(ms).toLocaleString('en-US', {
+    timeZone: 'Asia/Bangkok',
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    hour12: false,
+  });
+}
+
+function summarizeBotEvent(ev: BotEventRow): string {
+  switch (ev.kind) {
+    case 'boot': return `boot · ${(ev.payload?.env as string) ?? '?'}${ev.payload?.dry_run ? ' · dry' : ''}`;
+    case 'heartbeat': return ev.equity_usd != null ? `heartbeat · $${ev.equity_usd.toFixed(2)}` : 'heartbeat';
+    case 'dry_run_signal': return `dry ${ev.side ?? '?'} @ ${ev.price_usd?.toFixed(0) ?? '?'}`;
+    case 'entry': return `${ev.side ?? '?'} entry @ ${ev.price_usd?.toFixed(0) ?? '?'}`;
+    case 'exit': return `exit · ${(ev.payload?.reason as string) ?? '?'}`;
+    case 'kill_switch': return 'KILL SWITCH';
+    case 'halt': return 'HALT';
+    case 'boot_flatten': return 'boot flatten';
+    case 'order_failed': return 'order failed';
+    case 'signal_skipped': return `signal skipped: ${(ev.payload?.reason as string) ?? '?'}`;
+  }
+}
+
+function BotStatusMobile() {
+  // queryKey includes the source so mobile + desktop share one cache
+  // entry (matches components/BotStatusCard.tsx) — Sourcery flagged the
+  // bare ['bot-status'] key on PR #27 review.
+  const source = 'snapback-btc';
+  const { data } = useQuery({
+    queryKey: ['bot-status', source],
+    queryFn: () => api.botStatus(source),
+    refetchInterval: 30_000,
+    staleTime: 25_000,
+  });
+
+  // Render the section header always — but compress the body in the
+  // empty state so the user sees "section exists, no data yet" instead
+  // of nothing.
+  const hasData = data && (data.boot != null || data.recentEvents.length > 0);
+  const health = data?.health ?? 'unknown';
+  const dryRun = Boolean(data?.boot?.dry_run);
+
+  return (
+    <>
+      <div style={M.section}>Trading bot</div>
+      <div style={{ ...M.card, padding: '14px 16px' }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+          marginBottom: hasData ? 12 : 6,
+        }}>
+          <BotPill color={BOT_HEALTH_COLOR[health]} label={BOT_HEALTH_LABEL[health]} />
+          <span style={{ fontSize: 13, fontWeight: 600 }}>snapback-btc</span>
+          {dryRun && <BotPill color="var(--muted)" label="DRY" small />}
+          {data?.isHalted && <BotPill color="var(--down)" label="HALT" small />}
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+            hb {fmtBotAge(data?.heartbeatAgeS ?? null)}
+          </span>
+        </div>
+
+        {!hasData ? (
+          <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
+            Bot hasn't pushed any events yet. Will populate once the
+            droplet has <code style={{ fontFamily: 'var(--mono)' }}>CONSOLIDATE_API_URL</code>
+            {' '}+ <code style={{ fontFamily: 'var(--mono)' }}>CONSOLIDATE_API_TOKEN</code> set.
+          </div>
+        ) : (
+          <>
+            {/* Equity row */}
+            <div style={{
+              display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: 6, marginBottom: 12,
+            }}>
+              <BotStat label="Equity"
+                       value={data!.currentEquityUsd != null ? `$${data!.currentEquityUsd.toFixed(2)}` : '—'} />
+              <BotStat label="Kill at"
+                       value={data!.killSwitchLevelUsd != null ? `$${data!.killSwitchLevelUsd.toFixed(2)}` : '—'} />
+              <BotStat label="Headroom"
+                       value={data!.killSwitchHeadroomPct != null
+                         ? `${data!.killSwitchHeadroomPct >= 0 ? '+' : ''}${data!.killSwitchHeadroomPct.toFixed(1)}%`
+                         : '—'}
+                       valueColor={
+                         data!.killSwitchHeadroomPct != null && data!.killSwitchHeadroomPct < 5
+                           ? 'var(--down)' : 'var(--text)'
+                       } />
+            </div>
+
+            {/* Counters */}
+            <div style={{
+              display: 'flex', justifyContent: 'space-between',
+              fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--muted)',
+              marginBottom: 10,
+            }}>
+              <span>entries {data!.totals.entries}</span>
+              <span>exits {data!.totals.exits}</span>
+              <span>dry sig {data!.totals.dryRunSignals}</span>
+              <span>kill {data!.totals.killSwitchFires}</span>
+            </div>
+
+            {/* Recent events — top 5 only */}
+            {data!.recentEvents.length > 0 && (
+              <div style={{
+                paddingTop: 8, borderTop: '1px solid var(--border)',
+                display: 'flex', flexDirection: 'column', gap: 5,
+              }}>
+                {data!.recentEvents.slice(0, 5).map((ev) => (
+                  <div key={ev.id} style={{
+                    display: 'grid', gridTemplateColumns: '92px 1fr',
+                    fontSize: 11, gap: 6,
+                  }}>
+                    <span style={{
+                      color: 'var(--muted)', fontFamily: 'var(--mono)',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}>
+                      {fmtBotTs(ev.bot_ts_ms)}
+                    </span>
+                    <span>{summarizeBotEvent(ev)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
+function BotPill({ color, label, small }: { color: string; label: string; small?: boolean }) {
+  return (
+    <span style={{
+      border: `1px solid ${color}`, color, padding: small ? '1px 6px' : '2px 8px',
+      borderRadius: 999, fontSize: small ? 9 : 10, fontWeight: 700,
+      letterSpacing: 0.4, fontFamily: 'var(--mono)', textTransform: 'uppercase',
+      whiteSpace: 'nowrap',
+    }}>
+      {label}
+    </span>
+  );
+}
+
+function BotStat({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
+  return (
+    <div>
+      <div style={{ fontSize: 9.5, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+        {label}
+      </div>
+      <div style={{
+        fontSize: 13, fontWeight: 600, fontFamily: 'var(--mono)',
+        color: valueColor ?? 'var(--text)', marginTop: 2,
+      }}>
+        {value}
+      </div>
+    </div>
   );
 }
 

@@ -276,7 +276,9 @@ export const api = {
     const qs = new URLSearchParams();
     qs.set('source', opts.source ?? 'snapback-btc');
     if (opts.kind) qs.set('kind', opts.kind);
-    if (opts.since) qs.set('since', String(opts.since));
+    // since=0 is a valid "all events from epoch" sentinel; match the
+    // server's explicit null/undefined check at services/bot-events.ts:104.
+    if (opts.since != null) qs.set('since', String(opts.since));
     if (opts.limit) qs.set('limit', String(opts.limit));
     return req<BotEventRow[]>(`/bot-events?${qs.toString()}`);
   },

@@ -97,9 +97,35 @@ export function BotStatusCard({ source = 'snapback-btc' }: Props) {
   if (error || !data) {
     return (
       <Shell>
-        <div style={{ color: 'var(--down)' }}>Failed to load bot status</div>
-        <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+        <Header source={source} data={null} />
+        <div style={{ color: 'var(--down)', fontSize: 13, marginTop: 6 }}>
+          Failed to load bot status
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
           {(error as Error)?.message ?? 'no data'}
+        </div>
+      </Shell>
+    );
+  }
+
+  // Empty state: dashboard is mounted but the bot has never pushed an event.
+  // Hide the empty 8-stat grid; show a hint of what's coming instead.
+  const hasAnyData = data.boot != null || data.recentEvents.length > 0;
+  if (!hasAnyData) {
+    return (
+      <Shell>
+        <Header source={source} data={data} />
+        <div style={{
+          marginTop: 12, padding: '14px 16px',
+          background: 'var(--surface-2, rgba(255,255,255,0.02))',
+          border: '1px dashed var(--border)',
+          borderRadius: 8, color: 'var(--muted)', fontSize: 13, lineHeight: 1.5,
+        }}>
+          Waiting for the first event from <code style={{ fontFamily: 'var(--mono)' }}>{source}</code>.
+          Status will populate once the bot's <code style={{ fontFamily: 'var(--mono)' }}>.env</code> has
+          {' '}<code style={{ fontFamily: 'var(--mono)' }}>CONSOLIDATE_API_URL</code> and
+          {' '}<code style={{ fontFamily: 'var(--mono)' }}>CONSOLIDATE_API_TOKEN</code> set,
+          and the bot restarts.
         </div>
       </Shell>
     );
@@ -107,21 +133,9 @@ export function BotStatusCard({ source = 'snapback-btc' }: Props) {
 
   return (
     <Shell>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <Pill color={STATUS_COLOR[data.health]} label={STATUS_LABEL[data.health]} />
-          <h3 style={{ fontSize: 14, margin: 0, color: 'var(--text)' }}>
-            {source}
-          </h3>
-          {data.boot?.dry_run && <Pill color="var(--muted)" label="DRY-RUN" small />}
-          {data.isHalted && <Pill color="var(--down)" label="HALTED" small />}
-        </div>
-        <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-          hb {fmtAge(data.heartbeatAgeS)}
-        </div>
-      </div>
+      <Header source={source} data={data} />
 
-      <Grid>
+      <Grid style={{ marginTop: 14 }}>
         <Stat label="Strategy" value={data.boot?.strategy_name ?? '—'} />
         <Stat label="Env" value={data.boot?.env ?? '—'} />
         <Stat label="Equity" value={fmtUsd(data.currentEquityUsd)} />
@@ -134,35 +148,38 @@ export function BotStatusCard({ source = 'snapback-btc' }: Props) {
               : undefined
           }
         />
-      </Grid>
-
-      <Grid style={{ marginTop: 10 }}>
         <Stat label="Live entries" value={String(data.totals.entries)} />
         <Stat label="Exits" value={String(data.totals.exits)} />
         <Stat label="Dry signals" value={String(data.totals.dryRunSignals)} />
         <Stat label="Kill fires" value={String(data.totals.killSwitchFires)} />
       </Grid>
 
-      <div style={{ marginTop: 14 }}>
-        <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+      <div style={{ marginTop: 18 }}>
+        <div style={{
+          fontSize: 11, color: 'var(--muted)',
+          textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8,
+        }}>
           Recent events
         </div>
         {data.recentEvents.length === 0 ? (
           <div style={{ color: 'var(--muted)', fontSize: 13 }}>No events yet.</div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {data.recentEvents.slice(0, 8).map((ev) => (
               <div
                 key={ev.id}
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: '110px 1fr',
-                  fontSize: 12,
-                  color: 'var(--text)',
-                  gap: 8,
+                  gridTemplateColumns: '130px 1fr',
+                  fontSize: 12.5, color: 'var(--text)', gap: 12,
+                  paddingBottom: 4, borderBottom: '1px solid var(--border)',
                 }}
               >
-                <span style={{ color: 'var(--muted)', fontVariantNumeric: 'tabular-nums' }}>
+                <span style={{
+                  color: 'var(--muted)',
+                  fontFamily: 'var(--mono)',
+                  fontVariantNumeric: 'tabular-nums',
+                }}>
                   {fmtBotTs(ev.bot_ts_ms)}
                 </span>
                 <span>{eventSummary(ev)}</span>
@@ -175,17 +192,34 @@ export function BotStatusCard({ source = 'snapback-btc' }: Props) {
   );
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Header({ source, data }: { source: string; data: BotStatus | null }) {
   return (
-    <div
-      style={{
-        background: 'var(--surface)',
-        border: '1px solid var(--border)',
-        borderRadius: 10,
-        padding: '14px 16px',
-        marginTop: 14,
-      }}
-    >
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      gap: 12,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <Pill color={STATUS_COLOR[data?.health ?? 'unknown']}
+              label={STATUS_LABEL[data?.health ?? 'unknown']} />
+        <h3 style={{ fontSize: 15, margin: 0, fontWeight: 600, color: 'var(--text)' }}>
+          {source}
+        </h3>
+        {data?.boot?.dry_run && <Pill color="var(--muted)" label="DRY-RUN" small />}
+        {data?.isHalted && <Pill color="var(--down)" label="HALTED" small />}
+      </div>
+      {data && (
+        <div style={{ fontSize: 11.5, color: 'var(--muted)', whiteSpace: 'nowrap' }}>
+          heartbeat {fmtAge(data.heartbeatAgeS)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Shell({ children }: { children: React.ReactNode }) {
+  // Match the project's other widgets: .widget class + 22px 24px padding.
+  return (
+    <div className="widget" style={{ padding: '22px 24px', marginBottom: 16 }}>
       {children}
     </div>
   );
@@ -198,12 +232,14 @@ function Pill({ color, label, small }: { color: string; label: string; small?: b
         background: 'transparent',
         border: `1px solid ${color}`,
         color,
-        padding: small ? '1px 6px' : '2px 8px',
-        borderRadius: 12,
+        padding: small ? '2px 8px' : '3px 10px',
+        borderRadius: 999,
         fontSize: small ? 10 : 11,
         fontWeight: 600,
-        letterSpacing: 0.5,
+        letterSpacing: 0.4,
         textTransform: 'uppercase',
+        fontFamily: 'var(--mono, monospace)',
+        whiteSpace: 'nowrap',
       }}
     >
       {label}
@@ -212,12 +248,14 @@ function Pill({ color, label, small }: { color: string; label: string; small?: b
 }
 
 function Grid({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
+  // 4 columns on wide screens, 2 on narrow — autofit prevents the empty
+  // dashboard from spreading each stat 400px apart.
   return (
     <div
       style={{
         display: 'grid',
-        gridTemplateColumns: 'repeat(4, 1fr)',
-        gap: 10,
+        gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+        gap: '16px 28px',
         ...style,
       }}
     >
@@ -229,14 +267,21 @@ function Grid({ children, style }: { children: React.ReactNode; style?: React.CS
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div>
-      <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+      <div style={{
+        fontSize: 10.5, color: 'var(--muted)',
+        textTransform: 'uppercase', letterSpacing: 0.6,
+        marginBottom: 4,
+      }}>
         {label}
       </div>
-      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+      <div style={{
+        fontSize: 16, fontWeight: 600, color: 'var(--text)',
+        fontVariantNumeric: 'tabular-nums', lineHeight: 1.2,
+      }}>
         {value}
       </div>
       {sub && (
-        <div style={{ fontSize: 10, color: 'var(--muted)' }}>{sub}</div>
+        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{sub}</div>
       )}
     </div>
   );

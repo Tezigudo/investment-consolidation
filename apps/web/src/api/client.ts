@@ -1,4 +1,12 @@
-import type { PortfolioSnapshot, TradeRow, ImportSummary, Platform } from '@consolidate/shared';
+import type {
+  PortfolioSnapshot,
+  TradeRow,
+  ImportSummary,
+  Platform,
+  BotStatus,
+  BotEventRow,
+  BotEventKind,
+} from '@consolidate/shared';
 
 export interface DepositRow {
   id: number;
@@ -260,6 +268,18 @@ export const api = {
   portfolioHistory: (days?: number) =>
     req<PortfolioHistoryResponse>(`/portfolio/history${days ? `?days=${days}` : ''}`),
   attribution: () => req<AttributionResponse>('/portfolio/attribution'),
+  // External bots (currently just snapback-btc) push events via /bot-event.
+  // These reads are for the dashboard's BotStatusCard.
+  botStatus: (source = 'snapback-btc') =>
+    req<BotStatus>(`/bot-status?source=${encodeURIComponent(source)}`),
+  botEvents: (opts: { source?: string; kind?: BotEventKind; since?: number; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    qs.set('source', opts.source ?? 'snapback-btc');
+    if (opts.kind) qs.set('kind', opts.kind);
+    if (opts.since) qs.set('since', String(opts.since));
+    if (opts.limit) qs.set('limit', String(opts.limit));
+    return req<BotEventRow[]>(`/bot-events?${qs.toString()}`);
+  },
 };
 
 export interface AttributionRow {

@@ -10,6 +10,7 @@ import { symbolRoutes } from './routes/symbols.js';
 import { cashRoutes } from './routes/cash.js';
 import { depositRoutes } from './routes/deposits.js';
 import { incomeRoutes } from './routes/income.js';
+import { botEventRoutes } from './routes/bot-events.js';
 import { startJobs } from './jobs/scheduler.js';
 
 const app = Fastify({ logger: { level: config.NODE_ENV === 'production' ? 'info' : 'debug' } });
@@ -58,6 +59,7 @@ await app.register(symbolRoutes);
 await app.register(cashRoutes);
 await app.register(depositRoutes);
 await app.register(incomeRoutes);
+await app.register(botEventRoutes);
 
 app.setErrorHandler((err, _req, reply) => {
   app.log.error(err);

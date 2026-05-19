@@ -321,6 +321,43 @@ export const PG_MIGRATIONS: Migration[] = [
         AND commission / qty BETWEEN 0.00075 AND 0.00125;
     `,
   },
+  {
+    version: 13,
+    name: 'bot_events',
+    up: `
+      -- External trading bots (currently snapback-btc on a DO droplet)
+      -- POST events to /bot-event as they happen — boots, heartbeats,
+      -- dry-run signals, live entries/exits, kill-switch fires. We log
+      -- the full event payload here so the dashboard can show "is my
+      -- bot alive?" without polling the bot directly. The bot is the
+      -- source of truth; this is a rolling read-only log.
+      --
+      -- (source, external_id) is the dedup key: the bots outbox uses
+      -- a monotonic id so retries from a queued outbox dont double-
+      -- write. Multiple bots can coexist by varying the source column.
+      CREATE TABLE IF NOT EXISTS bot_events (
+        id            BIGSERIAL PRIMARY KEY,
+        source        TEXT NOT NULL,
+        external_id   TEXT NOT NULL,
+        bot_ts        BIGINT NOT NULL,            -- ms epoch from the bot's clock
+        received_at   BIGINT NOT NULL,            -- ms epoch when API ingested it
+        kind          TEXT NOT NULL,              -- 'boot', 'heartbeat', 'dry_run_signal', 'entry', 'exit', 'kill_switch', 'halt', 'boot_flatten', 'order_failed', 'signal_skipped'
+        signal_id     TEXT,                       -- snap-v1-<root> for tradeable events; NULL otherwise
+        strategy      TEXT,                       -- 'multifactor-v1' etc.
+        side          TEXT CHECK (side IN ('long','short') OR side IS NULL),
+        qty           DOUBLE PRECISION,
+        price_usd     DOUBLE PRECISION,
+        notional_usd  DOUBLE PRECISION,
+        equity_usd    DOUBLE PRECISION,
+        payload       JSONB NOT NULL DEFAULT '{}'::jsonb,
+        UNIQUE (source, external_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_bot_events_bot_ts     ON bot_events(bot_ts DESC);
+      CREATE INDEX IF NOT EXISTS idx_bot_events_signal_id  ON bot_events(signal_id);
+      CREATE INDEX IF NOT EXISTS idx_bot_events_kind       ON bot_events(kind);
+      CREATE INDEX IF NOT EXISTS idx_bot_events_source_ts  ON bot_events(source, bot_ts DESC);
+    `,
+  },
 ];
 
 export async function runPgMigrations(pool: Pool) {

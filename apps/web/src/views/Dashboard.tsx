@@ -14,6 +14,7 @@ import { FxScenario } from '../components/FxScenario';
 import { DepositsLedger } from '../components/DepositsLedger';
 import { IncomeCenter } from '../components/IncomeCenter';
 import { HeroHistoryChart, DeltaStrip, usePortfolioHistory } from '../components/HeroHistoryChart';
+import { BotStatusCard } from '../components/BotStatusCard';
 import type { Currency, EnrichedPosition, TradeRow } from '@consolidate/shared';
 
 interface Props {
@@ -311,6 +312,10 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
 
         {/* TRADING ATTRIBUTION — humility check on past sells */}
         <TradingAttribution privacy={privacy} />
+
+        {/* SNAPBACK BOT — read-only status from the DO droplet via /bot-event push */}
+        <BotStatusCard />
+
 
         {/* HOLDINGS */}
         <div className="widget" style={{ padding: 0, marginBottom: 16 }}>

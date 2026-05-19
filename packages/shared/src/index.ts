@@ -97,3 +97,71 @@ export interface DividendRow {
 }
 
 export type Currency = 'USD' | 'THB' | 'USDT';
+
+// ─── External bot events (snapback-btc and future bots) ──────────────────────
+// The bot is the source of truth; the API logs events as they arrive.
+// Kinds map 1:1 to what the bot records in its own state.db events table.
+
+export type BotEventKind =
+  | 'boot'                 // bot started; payload has env, dry_run, strategy_name, deploy_start_equity
+  | 'heartbeat'            // periodic ping; payload has equity, halt_present
+  | 'dry_run_signal'       // signal fired but no order placed (DRY_RUN); has signal_id, side, price, sl, tp
+  | 'entry'                // live entry placed; has signal_id, side, qty, fill_price
+  | 'exit'                 // position closed (time-stop / boot-flatten / HALT / kill-switch); has signal_id
+  | 'kill_switch'          // kill-switch fired; bot will HALT
+  | 'halt'                 // HALT file detected; bot exiting
+  | 'boot_flatten'         // bot found open position at boot, flattened it
+  | 'order_failed'         // exchange rejected an order; has error msg in payload
+  | 'signal_skipped';      // signal fired but skipped (e.g. below exchange minimums)
+
+export interface BotEventPayload {
+  source: string;                // e.g. 'snapback-btc' — distinguishes if multiple bots ever exist
+  external_id: string;           // bot-side monotonic id; (source, external_id) is the dedup key
+  bot_ts_ms: number;             // ms epoch from the bot's clock when the event occurred
+  kind: BotEventKind;
+  signal_id?: string | null;     // snap-v1-<root> for tradeable events
+  strategy?: string | null;      // 'multifactor-v1' etc.
+  side?: 'long' | 'short' | null;
+  qty?: number | null;
+  price_usd?: number | null;
+  notional_usd?: number | null;
+  equity_usd?: number | null;
+  payload?: Record<string, unknown>;
+}
+
+export interface BotEventRow extends BotEventPayload {
+  id: number;
+  received_at: number;
+}
+
+export interface BotStatus {
+  source: string;
+  // Most recent boot event — defines current bot identity
+  boot: {
+    ts: number;
+    env: string;                 // 'mainnet' | 'testnet'
+    dry_run: boolean;
+    strategy_name: string | null;
+    commit: string | null;
+  } | null;
+  // Most recent heartbeat
+  lastHeartbeatTs: number | null;
+  heartbeatAgeS: number | null;  // (now - lastHeartbeat) / 1000
+  // Last known equity + kill switch
+  currentEquityUsd: number | null;
+  deployStartEquityUsd: number | null;
+  killSwitchLevelUsd: number | null;
+  killSwitchHeadroomPct: number | null;
+  // Status verdict: green / yellow / red
+  health: 'healthy' | 'stale' | 'down' | 'unknown';
+  isHalted: boolean;
+  // Last few events for context
+  recentEvents: BotEventRow[];
+  // Lifetime counters
+  totals: {
+    entries: number;
+    exits: number;
+    dryRunSignals: number;
+    killSwitchFires: number;
+  };
+}

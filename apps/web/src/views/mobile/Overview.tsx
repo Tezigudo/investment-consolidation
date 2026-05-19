@@ -323,6 +323,9 @@ export function Overview({ data, currency, setCurrency, privacy, setPrivacy }: P
         </div>
 
         {/* Income TTM */}
+        {/* Capital invested — FX-locked deposits baseline */}
+        <DepositsMobile privacy={privacy} />
+
         <IncomeMobile />
 
         {/* Trading attribution */}
@@ -777,6 +780,268 @@ function AttributionMobile({ privacy }: { privacy: boolean }) {
               </div>
             );
           })}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// Capital invested ledger — mobile version of components/DepositsLedger.tsx.
+// Same 3 headline stats (total committed, weighted-avg FX with drift,
+// USD value at today's FX) + platform split bar + recent deposits list
+// styled as touch-friendly rows instead of a table.
+const DEPOSIT_PLAT_COLOR: Record<string, string> = {
+  DIME: 'var(--accent)',
+  Binance: 'var(--accent-2)',
+  OnChain: 'oklch(0.78 0.15 145)',
+  Bank: 'var(--muted-2)',
+};
+
+function DepositsMobile({ privacy }: { privacy: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const { data } = useQuery({
+    queryKey: ['deposits'],
+    queryFn: () => api.deposits(200),
+    staleTime: 60_000,
+  });
+
+  // Match desktop behavior: render the section header always so users
+  // know it exists, even when the ledger is empty.
+  if (!data) {
+    return (
+      <>
+        <div style={M.section}>Capital invested</div>
+        <div style={{ ...M.card, color: 'var(--muted)', fontSize: 13 }}>
+          Loading deposits…
+        </div>
+      </>
+    );
+  }
+
+  const { rows, summary } = data;
+  if (summary.count === 0) {
+    return (
+      <>
+        <div style={M.section}>Capital invested</div>
+        <div style={{ ...M.card, color: 'var(--muted)', fontSize: 13, lineHeight: 1.5 }}>
+          No deposits recorded. Sync DIME mail or Binance to populate
+          the FX-locked capital baseline.
+        </div>
+      </>
+    );
+  }
+
+  const fxDriftPct =
+    summary.weightedFX > 0
+      ? ((summary.currentFX - summary.weightedFX) / summary.weightedFX) * 100
+      : 0;
+  // Current FX < locked → THB strengthened against USD → user benefited
+  // (would now need fewer USD to buy the same THB back). Pure FX arithmetic;
+  // the dashboard surfaces this as a separate fxContrib component in PNL.
+  const driftFavourable = fxDriftPct < 0;
+  const ifUnconvertedUSD =
+    summary.currentFX > 0 ? summary.totalTHB / summary.currentFX : 0;
+  const platforms = Object.entries(summary.byPlatform).sort(
+    (a, b) => b[1].totalTHB - a[1].totalTHB,
+  );
+  const visibleRows = expanded ? rows : rows.slice(0, 5);
+
+  const veil = (s: string) => (privacy ? '•••' : s);
+
+  return (
+    <>
+      <div style={M.section}>Capital invested</div>
+      <div style={{ ...M.card, padding: '14px 16px' }}>
+        {/* Headline: total committed THB, big */}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{
+            fontSize: 10, color: 'var(--muted)',
+            textTransform: 'uppercase', letterSpacing: 0.5,
+          }}>
+            Total committed
+          </div>
+          <div style={{
+            fontFamily: 'var(--mono)', fontSize: 22, fontWeight: 500,
+            marginTop: 2,
+          }}>
+            {veil(fmtTHB(summary.totalTHB, { dp: 0 }))}
+          </div>
+          <div style={{
+            fontFamily: 'var(--mono)', fontSize: 11,
+            color: 'var(--muted)', marginTop: 2,
+          }}>
+            {veil(fmtUSD(summary.totalUSD, { dp: 0 }))} at lock-time FX
+          </div>
+        </div>
+
+        {/* FX drift + un-converted-today, two-up */}
+        <div style={{
+          display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12,
+          paddingTop: 12, borderTop: '1px solid var(--border)',
+        }}>
+          <div>
+            <div style={{
+              fontSize: 10, color: 'var(--muted)',
+              textTransform: 'uppercase', letterSpacing: 0.5,
+            }}>
+              Avg locked FX
+            </div>
+            <div style={{
+              fontFamily: 'var(--mono)', fontSize: 14, fontWeight: 600,
+              marginTop: 2,
+            }}>
+              {summary.weightedFX.toFixed(2)}
+            </div>
+            <div style={{
+              fontFamily: 'var(--mono)', fontSize: 10,
+              color: 'var(--muted)', marginTop: 2,
+            }}>
+              now {summary.currentFX.toFixed(2)}{' '}
+              <span style={{ color: driftFavourable ? 'var(--up)' : 'var(--down)' }}>
+                {fxDriftPct >= 0 ? '+' : '−'}
+                {Math.abs(fxDriftPct).toFixed(1)}%
+              </span>
+            </div>
+          </div>
+          <div>
+            <div style={{
+              fontSize: 10, color: 'var(--muted)',
+              textTransform: 'uppercase', letterSpacing: 0.5,
+            }}>
+              Un-converted today
+            </div>
+            <div style={{
+              fontFamily: 'var(--mono)', fontSize: 14, fontWeight: 600,
+              marginTop: 2,
+            }}>
+              {veil(fmtUSD(ifUnconvertedUSD, { dp: 0 }))}
+            </div>
+            <div style={{
+              fontFamily: 'var(--mono)', fontSize: 10,
+              color: summary.fxBaselineDeltaUSD >= 0 ? 'var(--up)' : 'var(--down)',
+              marginTop: 2,
+            }}>
+              {summary.fxBaselineDeltaUSD >= 0 ? '+' : '−'}
+              {veil(fmtUSD(Math.abs(summary.fxBaselineDeltaUSD), { dp: 0 }))} vs lock
+            </div>
+          </div>
+        </div>
+
+        {/* Platform split bar */}
+        {platforms.length > 1 && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{
+              display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden',
+            }}>
+              {platforms.map(([plat, p]) => {
+                const pct = (p.totalTHB / summary.totalTHB) * 100;
+                return (
+                  <div
+                    key={plat}
+                    style={{
+                      width: `${pct}%`,
+                      background: DEPOSIT_PLAT_COLOR[plat] ?? 'var(--muted-2)',
+                      opacity: 0.9,
+                    }}
+                  />
+                );
+              })}
+            </div>
+            <div style={{
+              display: 'flex', gap: 10, marginTop: 6,
+              flexWrap: 'wrap', fontSize: 10,
+            }}>
+              {platforms.map(([plat, p]) => (
+                <div key={plat} style={{
+                  display: 'flex', alignItems: 'center', gap: 5,
+                }}>
+                  <span style={{
+                    width: 6, height: 6, borderRadius: 2,
+                    background: DEPOSIT_PLAT_COLOR[plat] ?? 'var(--muted-2)',
+                  }} />
+                  <span>{plat}</span>
+                  <span style={{ color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+                    {((p.totalTHB / summary.totalTHB) * 100).toFixed(0)}%
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Recent deposits as touch-friendly rows (not a table) */}
+        <div style={{
+          marginTop: 14, paddingTop: 12,
+          borderTop: '1px solid var(--border)',
+        }}>
+          <div style={{
+            fontSize: 10, color: 'var(--muted)',
+            textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8,
+          }}>
+            Recent · last {visibleRows.length}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {visibleRows.map((r) => {
+              const drift =
+                r.fx_locked > 0
+                  ? ((summary.currentFX - r.fx_locked) / r.fx_locked) * 100
+                  : 0;
+              const date = new Date(Number(r.ts)).toISOString().slice(0, 10);
+              const platColor = DEPOSIT_PLAT_COLOR[r.platform] ?? 'var(--muted-2)';
+              return (
+                <div
+                  key={r.id}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '70px 56px 1fr auto',
+                    alignItems: 'center', gap: 8, fontSize: 12,
+                  }}
+                >
+                  <span style={{
+                    fontFamily: 'var(--mono)', fontSize: 10,
+                    color: 'var(--muted)',
+                  }}>
+                    {date}
+                  </span>
+                  <span style={{
+                    fontSize: 10, fontWeight: 600,
+                    background: `color-mix(in oklab, ${platColor} 16%, transparent)`,
+                    color: platColor,
+                    padding: '2px 6px', borderRadius: 4,
+                    textAlign: 'center',
+                  }}>
+                    {r.platform}
+                  </span>
+                  <span style={{
+                    fontFamily: 'var(--mono)', textAlign: 'right',
+                  }}>
+                    {veil(fmtTHB(r.amount_thb, { dp: 0 }))}
+                  </span>
+                  <span style={{
+                    fontFamily: 'var(--mono)', fontSize: 10,
+                    color: drift < 0 ? 'var(--up)' : drift > 0 ? 'var(--down)' : 'var(--muted)',
+                    minWidth: 44, textAlign: 'right',
+                  }}>
+                    {drift >= 0 ? '+' : '−'}
+                    {Math.abs(drift).toFixed(1)}%
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          {rows.length > 5 && (
+            <button
+              onClick={() => setExpanded((v) => !v)}
+              style={{
+                marginTop: 10, padding: '6px 10px', fontSize: 11,
+                background: 'transparent', border: '1px solid var(--border)',
+                color: 'var(--muted)', borderRadius: 6, cursor: 'pointer',
+                fontFamily: 'var(--mono)', width: '100%',
+              }}
+            >
+              {expanded ? 'Show recent 5' : `Show all ${rows.length}`}
+            </button>
+          )}
         </div>
       </div>
     </>

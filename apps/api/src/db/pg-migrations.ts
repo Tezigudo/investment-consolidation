@@ -339,16 +339,21 @@ export const PG_MIGRATIONS: Migration[] = [
         id            BIGSERIAL PRIMARY KEY,
         source        TEXT NOT NULL,
         external_id   TEXT NOT NULL,
-        bot_ts        BIGINT NOT NULL,            -- ms epoch from the bot's clock
+        bot_ts        BIGINT NOT NULL,            -- ms epoch from the bots clock
         received_at   BIGINT NOT NULL,            -- ms epoch when API ingested it
-        kind          TEXT NOT NULL,              -- 'boot', 'heartbeat', 'dry_run_signal', 'entry', 'exit', 'kill_switch', 'halt', 'boot_flatten', 'order_failed', 'signal_skipped'
+        kind          TEXT NOT NULL CHECK (kind IN (
+          'boot', 'heartbeat', 'dry_run_signal',
+          'entry', 'exit',
+          'kill_switch', 'halt', 'boot_flatten',
+          'order_failed', 'signal_skipped'
+        )),
         signal_id     TEXT,                       -- snap-v1-<root> for tradeable events; NULL otherwise
-        strategy      TEXT,                       -- 'multifactor-v1' etc.
+        strategy      TEXT,                       -- multifactor-v1 etc.
         side          TEXT CHECK (side IN ('long','short') OR side IS NULL),
-        qty           DOUBLE PRECISION,
-        price_usd     DOUBLE PRECISION,
-        notional_usd  DOUBLE PRECISION,
-        equity_usd    DOUBLE PRECISION,
+        qty           DOUBLE PRECISION CHECK (qty IS NULL OR qty >= 0),
+        price_usd     DOUBLE PRECISION CHECK (price_usd IS NULL OR price_usd > 0),
+        notional_usd  DOUBLE PRECISION CHECK (notional_usd IS NULL OR notional_usd >= 0),
+        equity_usd    DOUBLE PRECISION CHECK (equity_usd IS NULL OR equity_usd >= 0),
         payload       JSONB NOT NULL DEFAULT '{}'::jsonb,
         UNIQUE (source, external_id)
       );

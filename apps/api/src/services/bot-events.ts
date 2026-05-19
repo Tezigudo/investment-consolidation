@@ -100,7 +100,9 @@ export async function recentBotEvents(
     conditions.push(`kind = $${nextArg++}`);
     args.push(opts.kind);
   }
-  if (opts.since) {
+  // Explicit null/undefined check — since=0 is a valid "give me everything
+  // from epoch onward" timestamp (Sourcery flagged the falsy-guard bug).
+  if (opts.since != null) {
     conditions.push(`bot_ts > $${nextArg++}`);
     args.push(opts.since);
   }
@@ -117,31 +119,44 @@ export async function recentBotEvents(
 
 export async function botStatus(source: string): Promise<BotStatus> {
   const now = Date.now();
-  // Most recent boot event (one query)
-  const { rows: bootRows } = await pool.query<BotEventDbRow>(
-    `SELECT * FROM bot_events
-     WHERE source = $1 AND kind = 'boot'
-     ORDER BY bot_ts DESC LIMIT 1`,
-    [source],
-  );
-  // Most recent heartbeat
-  const { rows: hbRows } = await pool.query<BotEventDbRow>(
-    `SELECT * FROM bot_events
-     WHERE source = $1 AND kind = 'heartbeat'
-     ORDER BY bot_ts DESC LIMIT 1`,
-    [source],
-  );
-  // Most recent equity-bearing event (heartbeat OR entry OR kill_switch),
-  // which carries equity_usd
-  const { rows: eqRows } = await pool.query<BotEventDbRow>(
-    `SELECT * FROM bot_events
-     WHERE source = $1 AND equity_usd IS NOT NULL
-     ORDER BY bot_ts DESC LIMIT 1`,
-    [source],
-  );
-  // Most recent halt event since the last boot — tells us if the bot
-  // is currently in HALT state (it stops responding after HALT but we
-  // want the dashboard to surface why).
+
+  // Parallelize the 4 independent first-pass queries. The halt query
+  // depends on the boot ts so it runs in the second wave. Recent +
+  // counts are independent of all the others.
+  const [
+    { rows: bootRows },
+    { rows: hbRows },
+    { rows: eqRows },
+    { rows: countRows },
+    recent,
+  ] = await Promise.all([
+    pool.query<BotEventDbRow>(
+      `SELECT * FROM bot_events
+       WHERE source = $1 AND kind = 'boot'
+       ORDER BY bot_ts DESC LIMIT 1`,
+      [source],
+    ),
+    pool.query<BotEventDbRow>(
+      `SELECT * FROM bot_events
+       WHERE source = $1 AND kind = 'heartbeat'
+       ORDER BY bot_ts DESC LIMIT 1`,
+      [source],
+    ),
+    pool.query<BotEventDbRow>(
+      `SELECT * FROM bot_events
+       WHERE source = $1 AND equity_usd IS NOT NULL
+       ORDER BY bot_ts DESC LIMIT 1`,
+      [source],
+    ),
+    pool.query<{ kind: string; count: string }>(
+      `SELECT kind, COUNT(*) AS count FROM bot_events
+       WHERE source = $1 GROUP BY kind`,
+      [source],
+    ),
+    recentBotEvents(source, { limit: 20 }),
+  ]);
+
+  // Halt query depends on last-boot ts, so it runs after the first wave.
   const lastBootTs = bootRows[0] ? Number(bootRows[0].bot_ts) : 0;
   const { rows: haltRows } = await pool.query<BotEventDbRow>(
     `SELECT * FROM bot_events
@@ -149,17 +164,9 @@ export async function botStatus(source: string): Promise<BotStatus> {
      ORDER BY bot_ts DESC LIMIT 1`,
     [source, lastBootTs],
   );
-  // Lifetime totals by kind
-  const { rows: countRows } = await pool.query<{ kind: string; count: string }>(
-    `SELECT kind, COUNT(*) AS count FROM bot_events
-     WHERE source = $1 GROUP BY kind`,
-    [source],
-  );
+
   const counts: Record<string, number> = {};
   for (const r of countRows) counts[r.kind] = Number(r.count);
-
-  // Recent events (mixed kinds) for the timeline.
-  const recent = await recentBotEvents(source, { limit: 20 });
 
   const boot = bootRows[0];
   const hb = hbRows[0];

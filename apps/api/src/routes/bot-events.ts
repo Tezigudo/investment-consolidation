@@ -39,10 +39,14 @@ const EventBody = z.object({
   signal_id: z.string().max(64).nullable().optional(),
   strategy: z.string().max(64).nullable().optional(),
   side: z.enum(['long', 'short']).nullable().optional(),
-  qty: z.number().finite().nullable().optional(),
-  price_usd: z.number().finite().nullable().optional(),
-  notional_usd: z.number().finite().nullable().optional(),
-  equity_usd: z.number().finite().nullable().optional(),
+  // Numeric fields are bounded to defend against malformed/replayed events
+  // that would produce nonsense in the dashboard (negative equity makes
+  // killSwitchHeadroomPct render a garbage signed value; price_usd=0 would
+  // div-by-zero in some downstream consumers).
+  qty: z.number().finite().nonnegative().nullable().optional(),
+  price_usd: z.number().finite().positive().nullable().optional(),
+  notional_usd: z.number().finite().nonnegative().nullable().optional(),
+  equity_usd: z.number().finite().nonnegative().nullable().optional(),
   payload: z.record(z.string(), z.unknown()).default({}),
 });
 
@@ -87,14 +91,23 @@ export async function botEventRoutes(app: FastifyInstance) {
         errors.push({ external_id: e.external_id, message: (err as Error).message });
       }
     }
+    // Returning 207 (or any non-2xx) on partial failure is critical: the bot's
+    // outbox drain only deletes local rows on a 2xx response. If we returned 200
+    // with errors in the body, the bot's default `res.ok` check would delete
+    // events the server actually failed to store. The (source, external_id)
+    // UNIQUE constraint makes the bot's retry safe (successful events dedupe).
     if (errors.length > 0) {
-      req.log.warn({ errors }, 'bot-event batch had errors');
+      req.log.warn({ errors, inserted, skipped }, 'bot-event batch had errors');
+      reply.code(inserted + skipped === 0 ? 500 : 207);
     }
     return { ok: errors.length === 0, inserted, skipped, errors };
   });
 
   app.get('/bot-status', async (req) => {
-    const source = (req.query as { source?: string })?.source ?? 'snapback-btc';
+    // `||` (not `??`) so an empty-string query param (?source=) still
+    // falls through to the default. Otherwise an accidental
+    // `WHERE source = ''` returns a fabricated "unknown" status.
+    const source = (req.query as { source?: string })?.source || 'snapback-btc';
     return botStatus(source);
   });
 
@@ -105,7 +118,7 @@ export async function botEventRoutes(app: FastifyInstance) {
       since?: string;
       limit?: string;
     };
-    const source = q.source ?? 'snapback-btc';
+    const source = q.source || 'snapback-btc';
     const opts: { kind?: BotEventKind; since?: number; limit?: number } = {};
     if (q.kind) {
       const k = KIND.safeParse(q.kind);

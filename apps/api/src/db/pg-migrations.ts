@@ -333,7 +333,7 @@ export const PG_MIGRATIONS: Migration[] = [
       -- source of truth; this is a rolling read-only log.
       --
       -- (source, external_id) is the dedup key: the bots outbox uses
-      -- a monotonic id so retries from a queued outbox dont double-
+      -- a monotonic id so retries from a queued outbox do not double-
       -- write. Multiple bots can coexist by varying the source column.
       CREATE TABLE IF NOT EXISTS bot_events (
         id            BIGSERIAL PRIMARY KEY,

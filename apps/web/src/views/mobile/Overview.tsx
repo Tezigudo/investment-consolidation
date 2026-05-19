@@ -4,7 +4,13 @@ import { AreaChart, Donut, WinLossBar } from '../../components/charts';
 import { api, type PortfolioHistoryResponse } from '../../api/client';
 import { fmtMoney, fmtPct, fmtTHB, fmtUSD } from '../../lib/format';
 import { M } from './styles';
-import type { Currency, EnrichedPosition, PortfolioSnapshot } from '@consolidate/shared';
+import type {
+  BotEventRow,
+  BotStatus,
+  Currency,
+  EnrichedPosition,
+  PortfolioSnapshot,
+} from '@consolidate/shared';
 
 interface Props {
   data: PortfolioSnapshot;
@@ -321,6 +327,9 @@ export function Overview({ data, currency, setCurrency, privacy, setPrivacy }: P
 
         {/* Trading attribution */}
         <AttributionMobile privacy={privacy} />
+
+        {/* snapback-btc bot — read-only status pushed from the DO droplet */}
+        <BotStatusMobile />
 
         <div style={{ height: 24 }} />
       </div>
@@ -656,7 +665,21 @@ function IncomeMobile() {
     queryFn: () => api.income(),
     staleTime: 60_000,
   });
-  if (!data || data.totalUSD <= 0.005) return null;
+  // Match the desktop IncomeCenter: render an empty-state card even when
+  // there's no income yet, so mobile users see "the section exists, just
+  // no data" rather than nothing at all. The user reported income was
+  // "missing" on mobile when it was actually a silent null.
+  if (!data || data.totalUSD <= 0.005) {
+    return (
+      <>
+        <div style={M.section}>Income · TTM</div>
+        <div style={{ ...M.card, color: 'var(--muted)', fontSize: 13, lineHeight: 1.5 }}>
+          No income tracked yet. Earn rewards, dividends, and on-chain
+          yield will appear here once they hit the wallet.
+        </div>
+      </>
+    );
+  }
 
   // Anchor to the 1st of the month-11. setUTCMonth on the current day
   // overflows when day > target-month length (e.g. May 31 → April 31 →
@@ -757,6 +780,183 @@ function AttributionMobile({ privacy }: { privacy: boolean }) {
         </div>
       </div>
     </>
+  );
+}
+
+// snapback-btc bot status — read-only push log from the DO droplet.
+// Compact mobile version of components/BotStatusCard.tsx: a single card
+// with status pill + equity + headroom + recent events list. Auto-hides
+// the bulky stat grid when there's no data yet (just shows a hint).
+const BOT_HEALTH_COLOR: Record<BotStatus['health'], string> = {
+  healthy: 'var(--up)',
+  stale: '#d4a017',
+  down: 'var(--down)',
+  unknown: 'var(--muted)',
+};
+const BOT_HEALTH_LABEL: Record<BotStatus['health'], string> = {
+  healthy: 'ALIVE',
+  stale: 'STALE',
+  down: 'DOWN',
+  unknown: 'NO DATA',
+};
+
+function fmtBotAge(seconds: number | null): string {
+  if (seconds == null) return '—';
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${(seconds / 3600).toFixed(1)}h`;
+  return `${(seconds / 86400).toFixed(1)}d`;
+}
+
+function fmtBotTs(ms: number): string {
+  return new Date(ms).toLocaleString('en-US', {
+    timeZone: 'Asia/Bangkok',
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    hour12: false,
+  });
+}
+
+function summarizeBotEvent(ev: BotEventRow): string {
+  switch (ev.kind) {
+    case 'boot': return `boot · ${(ev.payload?.env as string) ?? '?'}${ev.payload?.dry_run ? ' · dry' : ''}`;
+    case 'heartbeat': return ev.equity_usd != null ? `heartbeat · $${ev.equity_usd.toFixed(2)}` : 'heartbeat';
+    case 'dry_run_signal': return `dry ${ev.side ?? '?'} @ ${ev.price_usd?.toFixed(0) ?? '?'}`;
+    case 'entry': return `${ev.side ?? '?'} entry @ ${ev.price_usd?.toFixed(0) ?? '?'}`;
+    case 'exit': return `exit · ${(ev.payload?.reason as string) ?? '?'}`;
+    case 'kill_switch': return 'KILL SWITCH';
+    case 'halt': return 'HALT';
+    case 'boot_flatten': return 'boot flatten';
+    case 'order_failed': return 'order failed';
+    case 'signal_skipped': return `signal skipped: ${(ev.payload?.reason as string) ?? '?'}`;
+  }
+}
+
+function BotStatusMobile() {
+  const { data } = useQuery({
+    queryKey: ['bot-status'],
+    queryFn: () => api.botStatus('snapback-btc'),
+    refetchInterval: 30_000,
+    staleTime: 25_000,
+  });
+
+  // Render the section header always — but compress the body in the
+  // empty state so the user sees "section exists, no data yet" instead
+  // of nothing.
+  const hasData = data && (data.boot != null || data.recentEvents.length > 0);
+  const health = data?.health ?? 'unknown';
+  const dryRun = Boolean(data?.boot?.dry_run);
+
+  return (
+    <>
+      <div style={M.section}>Trading bot</div>
+      <div style={{ ...M.card, padding: '14px 16px' }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+          marginBottom: hasData ? 12 : 6,
+        }}>
+          <BotPill color={BOT_HEALTH_COLOR[health]} label={BOT_HEALTH_LABEL[health]} />
+          <span style={{ fontSize: 13, fontWeight: 600 }}>snapback-btc</span>
+          {dryRun && <BotPill color="var(--muted)" label="DRY" small />}
+          {data?.isHalted && <BotPill color="var(--down)" label="HALT" small />}
+          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+            hb {fmtBotAge(data?.heartbeatAgeS ?? null)}
+          </span>
+        </div>
+
+        {!hasData ? (
+          <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
+            Bot hasn't pushed any events yet. Will populate once the
+            droplet has <code style={{ fontFamily: 'var(--mono)' }}>CONSOLIDATE_API_URL</code>
+            {' '}+ <code style={{ fontFamily: 'var(--mono)' }}>CONSOLIDATE_API_TOKEN</code> set.
+          </div>
+        ) : (
+          <>
+            {/* Equity row */}
+            <div style={{
+              display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: 6, marginBottom: 12,
+            }}>
+              <BotStat label="Equity"
+                       value={data!.currentEquityUsd != null ? `$${data!.currentEquityUsd.toFixed(2)}` : '—'} />
+              <BotStat label="Kill at"
+                       value={data!.killSwitchLevelUsd != null ? `$${data!.killSwitchLevelUsd.toFixed(2)}` : '—'} />
+              <BotStat label="Headroom"
+                       value={data!.killSwitchHeadroomPct != null
+                         ? `${data!.killSwitchHeadroomPct >= 0 ? '+' : ''}${data!.killSwitchHeadroomPct.toFixed(1)}%`
+                         : '—'}
+                       valueColor={
+                         data!.killSwitchHeadroomPct != null && data!.killSwitchHeadroomPct < 5
+                           ? 'var(--down)' : 'var(--text)'
+                       } />
+            </div>
+
+            {/* Counters */}
+            <div style={{
+              display: 'flex', justifyContent: 'space-between',
+              fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--muted)',
+              marginBottom: 10,
+            }}>
+              <span>entries {data!.totals.entries}</span>
+              <span>exits {data!.totals.exits}</span>
+              <span>dry sig {data!.totals.dryRunSignals}</span>
+              <span>kill {data!.totals.killSwitchFires}</span>
+            </div>
+
+            {/* Recent events — top 5 only */}
+            {data!.recentEvents.length > 0 && (
+              <div style={{
+                paddingTop: 8, borderTop: '1px solid var(--border)',
+                display: 'flex', flexDirection: 'column', gap: 5,
+              }}>
+                {data!.recentEvents.slice(0, 5).map((ev) => (
+                  <div key={ev.id} style={{
+                    display: 'grid', gridTemplateColumns: '92px 1fr',
+                    fontSize: 11, gap: 6,
+                  }}>
+                    <span style={{
+                      color: 'var(--muted)', fontFamily: 'var(--mono)',
+                      fontVariantNumeric: 'tabular-nums',
+                    }}>
+                      {fmtBotTs(ev.bot_ts_ms)}
+                    </span>
+                    <span>{summarizeBotEvent(ev)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </>
+  );
+}
+
+function BotPill({ color, label, small }: { color: string; label: string; small?: boolean }) {
+  return (
+    <span style={{
+      border: `1px solid ${color}`, color, padding: small ? '1px 6px' : '2px 8px',
+      borderRadius: 999, fontSize: small ? 9 : 10, fontWeight: 700,
+      letterSpacing: 0.4, fontFamily: 'var(--mono)', textTransform: 'uppercase',
+      whiteSpace: 'nowrap',
+    }}>
+      {label}
+    </span>
+  );
+}
+
+function BotStat({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
+  return (
+    <div>
+      <div style={{ fontSize: 9.5, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+        {label}
+      </div>
+      <div style={{
+        fontSize: 13, fontWeight: 600, fontFamily: 'var(--mono)',
+        color: valueColor ?? 'var(--text)', marginTop: 2,
+      }}>
+        {value}
+      </div>
+    </div>
   );
 }
 

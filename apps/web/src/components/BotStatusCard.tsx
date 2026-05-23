@@ -13,7 +13,8 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { BotStatus, BotEventRow } from '@consolidate/shared';
+import type { BotStatus, BotEventRow, GateStatus } from '@consolidate/shared';
+import { gateLabel, fmtGateValue } from '../lib/gates';
 
 const STATUS_COLOR: Record<BotStatus['health'], string> = {
   healthy: 'var(--up, #3fb950)',
@@ -154,6 +155,8 @@ export function BotStatusCard({ source = 'snapback-btc' }: Props) {
         <Stat label="Kill fires" value={String(data.totals.killSwitchFires)} />
       </Grid>
 
+      {data.gates && <GatesPanel gates={data.gates} />}
+
       <div style={{ marginTop: 18 }}>
         <div style={{
           fontSize: 11, color: 'var(--muted)',
@@ -283,6 +286,125 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
       {sub && (
         <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{sub}</div>
       )}
+    </div>
+  );
+}
+
+function GatesPanel({ gates }: { gates: GateStatus }) {
+  // Defensive: the bot has a single producer that always builds all four
+  // fields, but if the contract ever drifts we don't want the whole card
+  // to crash. Treat missing arrays/objects as empty so the panel still
+  // renders (just with no rows).
+  const gatesLong = gates.gates_long ?? {};
+  const gatesShort = gates.gates_short ?? {};
+  const missingLong = gates.missing_long ?? [];
+  const missingShort = gates.missing_short ?? [];
+  const values = gates.values ?? {};
+  const longReady = missingLong.length === 0;
+  const shortReady = missingShort.length === 0;
+  const fired = gates.would_fire;
+  // would_fire color: green for long, red for short. Used in both the panel
+  // header and the column header so the visual story matches itself.
+  const firedColor = fired === 'long' ? 'var(--up, #3fb950)' : 'var(--down, #f85149)';
+
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div style={{
+        fontSize: 11, color: 'var(--muted)',
+        textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8,
+        display: 'flex', alignItems: 'baseline', gap: 8, flexWrap: 'wrap',
+      }}>
+        <span>Signal gates</span>
+        {fired ? (
+          <span style={{ color: firedColor, fontWeight: 700, fontSize: 11 }}>
+            FIRED: {fired.toUpperCase()}
+          </span>
+        ) : (
+          <span style={{ color: 'var(--muted)', fontSize: 11, textTransform: 'none' }}>
+            {gates.waiting_for ?? (
+              longReady && shortReady ? 'long+short ready' :
+              longReady ? 'long-ready' :
+              shortReady ? 'short-ready' :
+              'waiting'
+            )}
+          </span>
+        )}
+      </div>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr 1fr',
+        gap: 14,
+        fontSize: 12.5,
+      }}>
+        <GateColumn
+          title="LONG gates" gates={gatesLong} ready={longReady}
+          fired={fired === 'long'} side="long" />
+        <GateColumn
+          title="SHORT gates" gates={gatesShort} ready={shortReady}
+          fired={fired === 'short'} side="short" />
+        <div>
+          <div style={{
+            fontSize: 10.5, color: 'var(--muted)',
+            textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6,
+          }}>
+            Values
+          </div>
+          {Object.entries(values).map(([k, v]) => (
+            <div key={k} style={{
+              display: 'flex', justifyContent: 'space-between',
+              fontSize: 12, paddingBottom: 3,
+              color: 'var(--text)', fontVariantNumeric: 'tabular-nums',
+            }}>
+              <span style={{ color: 'var(--muted)' }}>{k}</span>
+              <span>{fmtGateValue(k, v)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GateColumn({ title, gates, ready, fired, side }: {
+  title: string;
+  gates: Record<string, boolean>;
+  ready: boolean;
+  fired: boolean;
+  side: 'long' | 'short';
+}) {
+  // Color logic: when this column's side is FIRING, match the panel
+  // header (green for long, red for short — bullish vs bearish convention).
+  // When merely "ready" but not fired, use green for both (positive signal
+  // pending). When neither, muted.
+  const sideColor = side === 'long' ? 'var(--up, #3fb950)' : 'var(--down, #f85149)';
+  const titleColor = fired ? sideColor : ready ? 'var(--up, #3fb950)' : 'var(--muted)';
+  return (
+    <div>
+      <div style={{
+        fontSize: 10.5, color: titleColor,
+        textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6,
+        fontWeight: ready ? 700 : 500,
+      }}>
+        {title}{ready ? ' ✓' : ''}
+      </div>
+      {Object.entries(gates).map(([k, ok]) => (
+        <div key={k} style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          fontSize: 12, paddingBottom: 3,
+        }}>
+          <span style={{
+            width: 14, height: 14, borderRadius: 3,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 11, fontWeight: 700, color: '#fff',
+            background: ok ? 'var(--up, #3fb950)' : 'var(--down, #f85149)',
+            flexShrink: 0,
+          }}>{ok ? '✓' : '✗'}</span>
+          <span style={{
+            color: ok ? 'var(--text)' : 'var(--muted)',
+            fontSize: 12,
+          }}>{gateLabel(k)}</span>
+        </div>
+      ))}
     </div>
   );
 }

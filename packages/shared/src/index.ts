@@ -134,6 +134,22 @@ export interface BotEventRow extends BotEventPayload {
   received_at: number;
 }
 
+// Snapshot of the bot's signal-evaluator gate state — answers "what is
+// currently true and what is it waiting for?". Pushed by the bot on every
+// heartbeat as `payload.gates`. Stable JSON shape across strategies, even
+// if the specific gate names differ.
+export interface GateStatus {
+  strategy: string;
+  would_fire: 'long' | 'short' | null;
+  values: Record<string, number | null>;
+  thresholds: Record<string, number | boolean | null>;
+  gates_long: Record<string, boolean>;
+  gates_short: Record<string, boolean>;
+  missing_long: string[];
+  missing_short: string[];
+  waiting_for: string;
+}
+
 export interface BotStatus {
   source: string;
   // Most recent boot event — defines current bot identity
@@ -157,6 +173,9 @@ export interface BotStatus {
   isHalted: boolean;
   // Last few events for context
   recentEvents: BotEventRow[];
+  // Current gate state from the most recent heartbeat with gates in payload.
+  // Null until the bot has been upgraded to push gate snapshots.
+  gates: GateStatus | null;
   // Lifetime counters
   totals: {
     entries: number;

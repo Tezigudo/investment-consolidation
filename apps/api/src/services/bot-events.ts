@@ -16,11 +16,33 @@ import type {
   BotEventPayload,
   BotEventRow,
   BotStatus,
+  GateStatus,
 } from '@consolidate/shared';
 import { pool } from '../db/client.js';
 
 const HEALTHY_THRESHOLD_S = 60;      // heartbeat fresher than 60s → green
 const STALE_THRESHOLD_S = 5 * 60;    // 60s–5min → yellow; older → red
+
+// Returns a valid GateStatus only if every field the UI walks (gates_long,
+// gates_short, missing_long, missing_short, values) is present with the
+// expected shape. A partial / drifted payload becomes null so the dashboard
+// hides the panel rather than crashing on .length or Object.entries.
+function extractGates(raw: unknown): GateStatus | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const g = raw as Record<string, unknown>;
+  const isStrBoolMap = (v: unknown): v is Record<string, boolean> =>
+    v !== null && typeof v === 'object' && !Array.isArray(v) &&
+    Object.values(v as Record<string, unknown>).every((x) => typeof x === 'boolean');
+  const isStrArr = (v: unknown): v is string[] =>
+    Array.isArray(v) && v.every((x) => typeof x === 'string');
+  if (typeof g.strategy !== 'string') return null;
+  if (!isStrBoolMap(g.gates_long)) return null;
+  if (!isStrBoolMap(g.gates_short)) return null;
+  if (!isStrArr(g.missing_long)) return null;
+  if (!isStrArr(g.missing_short)) return null;
+  if (g.values && (typeof g.values !== 'object' || Array.isArray(g.values))) return null;
+  return g as unknown as GateStatus;
+}
 
 export async function insertBotEvent(p: BotEventPayload): Promise<{ inserted: boolean; id: number | null }> {
   const res = await pool.query<{ id: string }>(
@@ -215,12 +237,11 @@ export async function botStatus(source: string): Promise<BotStatus> {
   // the 2026-05-23 upgrade. Older heartbeats won't have it; treat as null.
   // Pulled from the SAME hb row used for lastHeartbeatTs above, so the gate
   // snapshot is always consistent with the heartbeat age shown to the user.
+  // Per-field shape check (matches the pattern used for boot payload above) —
+  // a partial / drifted payload becomes null rather than crashing the UI on
+  // Object.entries(gates_long) or missing_long.length.
   const hbPayload = (hb?.payload ?? {}) as Record<string, unknown>;
-  const gatesRaw = hbPayload.gates;
-  const gates =
-    gatesRaw && typeof gatesRaw === 'object' && !Array.isArray(gatesRaw)
-      ? (gatesRaw as BotStatus['gates'])
-      : null;
+  const gates = extractGates(hbPayload.gates);
 
   return {
     source,

@@ -4,6 +4,7 @@ import { AreaChart, Donut, WinLossBar } from '../../components/charts';
 import { api, type PortfolioHistoryResponse } from '../../api/client';
 import { fmtMoney, fmtPct, fmtTHB, fmtUSD } from '../../lib/format';
 import { BOT_SOURCES } from '../../lib/bots';
+import { gateLabel } from '../../lib/gates';
 import { M } from './styles';
 import type {
   BotEventRow,
@@ -1192,44 +1193,59 @@ function BotStatusMobile({ source = 'snapback-btc' }: { source?: string }) {
           </div>
 
           {/* Signal gates — compact mobile view of "what's true / waiting for" */}
-          {data!.gates && (
-            <div style={{
-              marginBottom: 10, paddingTop: 8, borderTop: '1px solid var(--border)',
-              fontSize: 11,
-            }}>
+          {data!.gates && (() => {
+            const g = data!.gates!;
+            const gatesLong = g.gates_long ?? {};
+            const gatesShort = g.gates_short ?? {};
+            const fired = g.would_fire;
+            const waitingFor = g.waiting_for;
+            return (
               <div style={{
-                color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.5,
-                marginBottom: 6, fontSize: 9.5,
+                marginBottom: 10, paddingTop: 8, borderTop: '1px solid var(--border)',
+                fontSize: 11,
               }}>
-                Gates {data!.gates.would_fire
-                  ? <span style={{
-                      color: data!.gates.would_fire === 'long' ? 'var(--up)' : 'var(--down)',
-                      fontWeight: 700,
-                    }}>· FIRED {data!.gates.would_fire.toUpperCase()}</span>
-                  : null}
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                <div>
-                  <div style={{ color: 'var(--muted)', fontSize: 9.5, marginBottom: 3 }}>LONG</div>
-                  {Object.entries(data!.gates.gates_long).map(([k, ok]) => (
-                    <div key={k} style={{ display: 'flex', gap: 4, fontSize: 11, lineHeight: 1.5 }}>
-                      <span style={{ color: ok ? 'var(--up)' : 'var(--down)', width: 10 }}>{ok ? '✓' : '✗'}</span>
-                      <span style={{ color: ok ? 'var(--text)' : 'var(--muted)' }}>{k}</span>
-                    </div>
-                  ))}
+                <div style={{
+                  color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.5,
+                  marginBottom: 6, fontSize: 9.5,
+                }}>
+                  Gates {fired
+                    ? <span style={{
+                        color: fired === 'long' ? 'var(--up)' : 'var(--down)',
+                        fontWeight: 700,
+                      }}>· FIRED {fired.toUpperCase()}</span>
+                    : null}
                 </div>
-                <div>
-                  <div style={{ color: 'var(--muted)', fontSize: 9.5, marginBottom: 3 }}>SHORT</div>
-                  {Object.entries(data!.gates.gates_short).map(([k, ok]) => (
-                    <div key={k} style={{ display: 'flex', gap: 4, fontSize: 11, lineHeight: 1.5 }}>
-                      <span style={{ color: ok ? 'var(--up)' : 'var(--down)', width: 10 }}>{ok ? '✓' : '✗'}</span>
-                      <span style={{ color: ok ? 'var(--text)' : 'var(--muted)' }}>{k}</span>
-                    </div>
-                  ))}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <div>
+                    <div style={{ color: 'var(--muted)', fontSize: 9.5, marginBottom: 3 }}>LONG</div>
+                    {Object.entries(gatesLong).map(([k, ok]) => (
+                      <div key={k} style={{ display: 'flex', gap: 4, fontSize: 11, lineHeight: 1.5 }}>
+                        <span style={{ color: ok ? 'var(--up)' : 'var(--down)', width: 10 }}>{ok ? '✓' : '✗'}</span>
+                        <span style={{ color: ok ? 'var(--text)' : 'var(--muted)' }}>{gateLabel(k)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div>
+                    <div style={{ color: 'var(--muted)', fontSize: 9.5, marginBottom: 3 }}>SHORT</div>
+                    {Object.entries(gatesShort).map(([k, ok]) => (
+                      <div key={k} style={{ display: 'flex', gap: 4, fontSize: 11, lineHeight: 1.5 }}>
+                        <span style={{ color: ok ? 'var(--up)' : 'var(--down)', width: 10 }}>{ok ? '✓' : '✗'}</span>
+                        <span style={{ color: ok ? 'var(--text)' : 'var(--muted)' }}>{gateLabel(k)}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
+                {!fired && waitingFor && (
+                  <div style={{
+                    color: 'var(--muted)', fontSize: 10, marginTop: 6,
+                    lineHeight: 1.4,
+                  }}>
+                    {waitingFor}
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Recent events — top 5 only */}
           {data!.recentEvents.length > 0 && (

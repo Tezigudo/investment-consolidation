@@ -15,6 +15,7 @@ import { DepositsLedger } from '../components/DepositsLedger';
 import { IncomeCenter } from '../components/IncomeCenter';
 import { HeroHistoryChart, DeltaStrip, usePortfolioHistory } from '../components/HeroHistoryChart';
 import { BotStatusCard } from '../components/BotStatusCard';
+import { BOT_SOURCES } from '../lib/bots';
 import type { Currency, EnrichedPosition, TradeRow } from '@consolidate/shared';
 
 interface Props {
@@ -316,9 +317,11 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
         {/* SNAPBACK BOTS — read-only status from the DO droplet via /bot-event push.
             Two legs run in parallel since 2026-05-23: multifactor-v1 on the main
             Binance account, Donchian-v3 cons on a sub-account. Each pushes events
-            with a distinct source so they render as separate cards. */}
-        <BotStatusCard source="snapback-btc" />
-        <BotStatusCard source="snapback-btc-donchian" />
+            with a distinct source so they render as separate cards. The canonical
+            source list lives in lib/bots.ts so desktop and mobile stay in sync. */}
+        {BOT_SOURCES.map((source) => (
+          <BotStatusCard key={source} source={source} />
+        ))}
 
 
         {/* HOLDINGS */}

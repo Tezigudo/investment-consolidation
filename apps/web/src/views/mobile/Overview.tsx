@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AreaChart, Donut, WinLossBar } from '../../components/charts';
 import { api, type PortfolioHistoryResponse } from '../../api/client';
 import { fmtMoney, fmtPct, fmtTHB, fmtUSD } from '../../lib/format';
+import { BOT_SOURCES } from '../../lib/bots';
 import { M } from './styles';
 import type {
   BotEventRow,
@@ -333,10 +334,12 @@ export function Overview({ data, currency, setCurrency, privacy, setPrivacy }: P
 
         {/* snapback bots — read-only status pushed from the DO droplet.
             Two parallel legs since 2026-05-23: v1 (main account) + Donchian-v3
-            cons (sub-account). Each pushes with a distinct source. */}
+            cons (sub-account). Each pushes with a distinct source. Source list
+            is shared with the desktop dashboard via lib/bots.ts. */}
         <div style={M.section}>Trading bots</div>
-        <BotStatusMobile source="snapback-btc" />
-        <BotStatusMobile source="snapback-btc-donchian" />
+        {BOT_SOURCES.map((source) => (
+          <BotStatusMobile key={source} source={source} />
+        ))}
 
         <div style={{ height: 24 }} />
       </div>
@@ -1135,86 +1138,84 @@ function BotStatusMobile({ source = 'snapback-btc' }: { source?: string }) {
   const dryRun = Boolean(data?.boot?.dry_run);
 
   return (
-    <>
-      <div style={{ ...M.card, padding: '14px 16px', marginBottom: 8 }}>
-        <div style={{
-          display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
-          marginBottom: hasData ? 12 : 6,
-        }}>
-          <BotPill color={BOT_HEALTH_COLOR[health]} label={BOT_HEALTH_LABEL[health]} />
-          <span style={{ fontSize: 13, fontWeight: 600 }}>{source}</span>
-          {dryRun && <BotPill color="var(--muted)" label="DRY" small />}
-          {data?.isHalted && <BotPill color="var(--down)" label="HALT" small />}
-          <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
-            hb {fmtBotAge(data?.heartbeatAgeS ?? null)}
-          </span>
-        </div>
-
-        {!hasData ? (
-          <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
-            Bot hasn't pushed any events yet. Will populate once the
-            droplet has <code style={{ fontFamily: 'var(--mono)' }}>CONSOLIDATE_API_URL</code>
-            {' '}+ <code style={{ fontFamily: 'var(--mono)' }}>CONSOLIDATE_API_TOKEN</code> set.
-          </div>
-        ) : (
-          <>
-            {/* Equity row */}
-            <div style={{
-              display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
-              gap: 6, marginBottom: 12,
-            }}>
-              <BotStat label="Equity"
-                       value={data!.currentEquityUsd != null ? `$${data!.currentEquityUsd.toFixed(2)}` : '—'} />
-              <BotStat label="Kill at"
-                       value={data!.killSwitchLevelUsd != null ? `$${data!.killSwitchLevelUsd.toFixed(2)}` : '—'} />
-              <BotStat label="Headroom"
-                       value={data!.killSwitchHeadroomPct != null
-                         ? `${data!.killSwitchHeadroomPct >= 0 ? '+' : ''}${data!.killSwitchHeadroomPct.toFixed(1)}%`
-                         : '—'}
-                       valueColor={
-                         data!.killSwitchHeadroomPct != null && data!.killSwitchHeadroomPct < 5
-                           ? 'var(--down)' : 'var(--text)'
-                       } />
-            </div>
-
-            {/* Counters */}
-            <div style={{
-              display: 'flex', justifyContent: 'space-between',
-              fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--muted)',
-              marginBottom: 10,
-            }}>
-              <span>entries {data!.totals.entries}</span>
-              <span>exits {data!.totals.exits}</span>
-              <span>dry sig {data!.totals.dryRunSignals}</span>
-              <span>kill {data!.totals.killSwitchFires}</span>
-            </div>
-
-            {/* Recent events — top 5 only */}
-            {data!.recentEvents.length > 0 && (
-              <div style={{
-                paddingTop: 8, borderTop: '1px solid var(--border)',
-                display: 'flex', flexDirection: 'column', gap: 5,
-              }}>
-                {data!.recentEvents.slice(0, 5).map((ev) => (
-                  <div key={ev.id} style={{
-                    display: 'grid', gridTemplateColumns: '92px 1fr',
-                    fontSize: 11, gap: 6,
-                  }}>
-                    <span style={{
-                      color: 'var(--muted)', fontFamily: 'var(--mono)',
-                      fontVariantNumeric: 'tabular-nums',
-                    }}>
-                      {fmtBotTs(ev.bot_ts_ms)}
-                    </span>
-                    <span>{summarizeBotEvent(ev)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
-        )}
+    <div style={{ ...M.card, padding: '14px 16px', marginBottom: 8 }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+        marginBottom: hasData ? 12 : 6,
+      }}>
+        <BotPill color={BOT_HEALTH_COLOR[health]} label={BOT_HEALTH_LABEL[health]} />
+        <span style={{ fontSize: 13, fontWeight: 600 }}>{source}</span>
+        {dryRun && <BotPill color="var(--muted)" label="DRY" small />}
+        {data?.isHalted && <BotPill color="var(--down)" label="HALT" small />}
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+          hb {fmtBotAge(data?.heartbeatAgeS ?? null)}
+        </span>
       </div>
-    </>
+
+      {!hasData ? (
+        <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
+          Bot hasn't pushed any events yet. Will populate once the
+          droplet has <code style={{ fontFamily: 'var(--mono)' }}>CONSOLIDATE_API_URL</code>
+          {' '}+ <code style={{ fontFamily: 'var(--mono)' }}>CONSOLIDATE_API_TOKEN</code> set.
+        </div>
+      ) : (
+        <>
+          {/* Equity row */}
+          <div style={{
+            display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: 6, marginBottom: 12,
+          }}>
+            <BotStat label="Equity"
+                     value={data!.currentEquityUsd != null ? `$${data!.currentEquityUsd.toFixed(2)}` : '—'} />
+            <BotStat label="Kill at"
+                     value={data!.killSwitchLevelUsd != null ? `$${data!.killSwitchLevelUsd.toFixed(2)}` : '—'} />
+            <BotStat label="Headroom"
+                     value={data!.killSwitchHeadroomPct != null
+                       ? `${data!.killSwitchHeadroomPct >= 0 ? '+' : ''}${data!.killSwitchHeadroomPct.toFixed(1)}%`
+                       : '—'}
+                     valueColor={
+                       data!.killSwitchHeadroomPct != null && data!.killSwitchHeadroomPct < 5
+                         ? 'var(--down)' : 'var(--text)'
+                     } />
+          </div>
+
+          {/* Counters */}
+          <div style={{
+            display: 'flex', justifyContent: 'space-between',
+            fontFamily: 'var(--mono)', fontSize: 11, color: 'var(--muted)',
+            marginBottom: 10,
+          }}>
+            <span>entries {data!.totals.entries}</span>
+            <span>exits {data!.totals.exits}</span>
+            <span>dry sig {data!.totals.dryRunSignals}</span>
+            <span>kill {data!.totals.killSwitchFires}</span>
+          </div>
+
+          {/* Recent events — top 5 only */}
+          {data!.recentEvents.length > 0 && (
+            <div style={{
+              paddingTop: 8, borderTop: '1px solid var(--border)',
+              display: 'flex', flexDirection: 'column', gap: 5,
+            }}>
+              {data!.recentEvents.slice(0, 5).map((ev) => (
+                <div key={ev.id} style={{
+                  display: 'grid', gridTemplateColumns: '92px 1fr',
+                  fontSize: 11, gap: 6,
+                }}>
+                  <span style={{
+                    color: 'var(--muted)', fontFamily: 'var(--mono)',
+                    fontVariantNumeric: 'tabular-nums',
+                  }}>
+                    {fmtBotTs(ev.bot_ts_ms)}
+                  </span>
+                  <span>{summarizeBotEvent(ev)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 

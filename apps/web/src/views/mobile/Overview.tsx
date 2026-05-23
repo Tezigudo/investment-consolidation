@@ -331,12 +331,8 @@ export function Overview({ data, currency, setCurrency, privacy, setPrivacy }: P
         {/* Trading attribution */}
         <AttributionMobile privacy={privacy} />
 
-        {/* snapback bots — read-only status pushed from the DO droplet.
-            Two parallel legs since 2026-05-23: v1 (main account) + Donchian-v3
-            cons (sub-account). Each pushes with a distinct source. */}
-        <div style={M.section}>Trading bots</div>
-        <BotStatusMobile source="snapback-btc" />
-        <BotStatusMobile source="snapback-btc-donchian" />
+        {/* snapback-btc bot — read-only status pushed from the DO droplet */}
+        <BotStatusMobile />
 
         <div style={{ height: 24 }} />
       </div>
@@ -1116,10 +1112,11 @@ function summarizeBotEvent(ev: BotEventRow): string {
   }
 }
 
-function BotStatusMobile({ source = 'snapback-btc' }: { source?: string }) {
+function BotStatusMobile() {
   // queryKey includes the source so mobile + desktop share one cache
   // entry (matches components/BotStatusCard.tsx) — Sourcery flagged the
   // bare ['bot-status'] key on PR #27 review.
+  const source = 'snapback-btc';
   const { data } = useQuery({
     queryKey: ['bot-status', source],
     queryFn: () => api.botStatus(source),
@@ -1136,13 +1133,14 @@ function BotStatusMobile({ source = 'snapback-btc' }: { source?: string }) {
 
   return (
     <>
-      <div style={{ ...M.card, padding: '14px 16px', marginBottom: 8 }}>
+      <div style={M.section}>Trading bot</div>
+      <div style={{ ...M.card, padding: '14px 16px' }}>
         <div style={{
           display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
           marginBottom: hasData ? 12 : 6,
         }}>
           <BotPill color={BOT_HEALTH_COLOR[health]} label={BOT_HEALTH_LABEL[health]} />
-          <span style={{ fontSize: 13, fontWeight: 600 }}>{source}</span>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>snapback-btc</span>
           {dryRun && <BotPill color="var(--muted)" label="DRY" small />}
           {data?.isHalted && <BotPill color="var(--down)" label="HALT" small />}
           <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>

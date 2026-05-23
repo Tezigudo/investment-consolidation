@@ -313,12 +313,8 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
         {/* TRADING ATTRIBUTION — humility check on past sells */}
         <TradingAttribution privacy={privacy} />
 
-        {/* SNAPBACK BOTS — read-only status from the DO droplet via /bot-event push.
-            Two legs run in parallel since 2026-05-23: multifactor-v1 on the main
-            Binance account, Donchian-v3 cons on a sub-account. Each pushes events
-            with a distinct source so they render as separate cards. */}
-        <BotStatusCard source="snapback-btc" />
-        <BotStatusCard source="snapback-btc-donchian" />
+        {/* SNAPBACK BOT — read-only status from the DO droplet via /bot-event push */}
+        <BotStatusCard />
 
 
         {/* HOLDINGS */}

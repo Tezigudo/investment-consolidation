@@ -13,7 +13,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { BotStatus, BotEventRow } from '@consolidate/shared';
+import type { BotStatus, BotEventRow, GateStatus } from '@consolidate/shared';
 
 const STATUS_COLOR: Record<BotStatus['health'], string> = {
   healthy: 'var(--up, #3fb950)',
@@ -154,6 +154,8 @@ export function BotStatusCard({ source = 'snapback-btc' }: Props) {
         <Stat label="Kill fires" value={String(data.totals.killSwitchFires)} />
       </Grid>
 
+      {data.gates && <GatesPanel gates={data.gates} />}
+
       <div style={{ marginTop: 18 }}>
         <div style={{
           fontSize: 11, color: 'var(--muted)',
@@ -283,6 +285,128 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
       {sub && (
         <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{sub}</div>
       )}
+    </div>
+  );
+}
+
+// Pretty gate names for the user-facing panel. Unknown gate names fall through
+// to the raw key so a new strategy works without dashboard changes.
+const GATE_LABELS: Record<string, string> = {
+  rsi_oversold: 'RSI oversold (<40)',
+  rsi_overbought: 'RSI overbought (>70)',
+  trend_up: 'Close > EMA(200)',
+  trend_down: 'Close < EMA(200)',
+  volume_spike: 'Volume > 2× SMA(20)',
+  funding_ok: 'Funding not extreme',
+  breakout_above_80bar: 'Close > 80-bar high',
+  breakdown_below_80bar: 'Close < 80-bar low',
+  slope_up: 'EMA-slope ≥ +3%',
+  slope_down: 'EMA-slope ≤ −3%',
+};
+
+function fmtVal(k: string, v: number | null): string {
+  if (v == null) return '—';
+  if (k === 'rsi') return v.toFixed(1);
+  if (k === 'vol_ratio') return `${v.toFixed(2)}×`;
+  if (k === 'funding_rate') return `${(v * 100).toFixed(4)}%`;
+  if (k === 'slope') return `${(v * 100).toFixed(2)}%`;
+  // Default: dollar-priced indicator
+  if (Math.abs(v) >= 1000) return `$${v.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+  return v.toFixed(4);
+}
+
+function GatesPanel({ gates }: { gates: GateStatus }) {
+  const longReady = gates.missing_long.length === 0;
+  const shortReady = gates.missing_short.length === 0;
+  const fired = gates.would_fire;
+
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div style={{
+        fontSize: 11, color: 'var(--muted)',
+        textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8,
+        display: 'flex', alignItems: 'center', gap: 8,
+      }}>
+        <span>Signal gates</span>
+        {fired ? (
+          <span style={{
+            color: fired === 'long' ? 'var(--up, #3fb950)' : 'var(--down, #f85149)',
+            fontWeight: 700, fontSize: 11,
+          }}>
+            FIRED: {fired.toUpperCase()}
+          </span>
+        ) : (
+          <span style={{ color: 'var(--muted)', fontSize: 11, textTransform: 'none' }}>
+            {longReady ? 'long-ready ' : ''}{shortReady ? 'short-ready' : ''}
+            {!longReady && !shortReady ? `waiting` : ''}
+          </span>
+        )}
+      </div>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr 1fr',
+        gap: 14,
+        fontSize: 12.5,
+      }}>
+        <GateColumn title="LONG gates" gates={gates.gates_long} ready={longReady} fired={fired === 'long'} />
+        <GateColumn title="SHORT gates" gates={gates.gates_short} ready={shortReady} fired={fired === 'short'} />
+        <div>
+          <div style={{
+            fontSize: 10.5, color: 'var(--muted)',
+            textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6,
+          }}>
+            Values
+          </div>
+          {Object.entries(gates.values).map(([k, v]) => (
+            <div key={k} style={{
+              display: 'flex', justifyContent: 'space-between',
+              fontSize: 12, paddingBottom: 3,
+              color: 'var(--text)', fontVariantNumeric: 'tabular-nums',
+            }}>
+              <span style={{ color: 'var(--muted)' }}>{k}</span>
+              <span>{fmtVal(k, v)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GateColumn({ title, gates, ready, fired }: {
+  title: string;
+  gates: Record<string, boolean>;
+  ready: boolean;
+  fired: boolean;
+}) {
+  return (
+    <div>
+      <div style={{
+        fontSize: 10.5,
+        color: fired ? 'var(--up, #3fb950)' : ready ? 'var(--up, #3fb950)' : 'var(--muted)',
+        textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6,
+        fontWeight: ready ? 700 : 500,
+      }}>
+        {title}{ready ? ' ✓' : ''}
+      </div>
+      {Object.entries(gates).map(([k, ok]) => (
+        <div key={k} style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          fontSize: 12, paddingBottom: 3,
+        }}>
+          <span style={{
+            width: 14, height: 14, borderRadius: 3,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 11, fontWeight: 700, color: '#fff',
+            background: ok ? 'var(--up, #3fb950)' : 'var(--down, #f85149)',
+            flexShrink: 0,
+          }}>{ok ? '✓' : '✗'}</span>
+          <span style={{
+            color: ok ? 'var(--text)' : 'var(--muted)',
+            fontSize: 12,
+          }}>{GATE_LABELS[k] ?? k}</span>
+        </div>
+      ))}
     </div>
   );
 }

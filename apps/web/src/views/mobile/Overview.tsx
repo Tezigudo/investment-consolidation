@@ -1191,6 +1191,46 @@ function BotStatusMobile({ source = 'snapback-btc' }: { source?: string }) {
             <span>kill {data!.totals.killSwitchFires}</span>
           </div>
 
+          {/* Signal gates — compact mobile view of "what's true / waiting for" */}
+          {data!.gates && (
+            <div style={{
+              marginBottom: 10, paddingTop: 8, borderTop: '1px solid var(--border)',
+              fontSize: 11,
+            }}>
+              <div style={{
+                color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: 0.5,
+                marginBottom: 6, fontSize: 9.5,
+              }}>
+                Gates {data!.gates.would_fire
+                  ? <span style={{
+                      color: data!.gates.would_fire === 'long' ? 'var(--up)' : 'var(--down)',
+                      fontWeight: 700,
+                    }}>· FIRED {data!.gates.would_fire.toUpperCase()}</span>
+                  : null}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div>
+                  <div style={{ color: 'var(--muted)', fontSize: 9.5, marginBottom: 3 }}>LONG</div>
+                  {Object.entries(data!.gates.gates_long).map(([k, ok]) => (
+                    <div key={k} style={{ display: 'flex', gap: 4, fontSize: 11, lineHeight: 1.5 }}>
+                      <span style={{ color: ok ? 'var(--up)' : 'var(--down)', width: 10 }}>{ok ? '✓' : '✗'}</span>
+                      <span style={{ color: ok ? 'var(--text)' : 'var(--muted)' }}>{k}</span>
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <div style={{ color: 'var(--muted)', fontSize: 9.5, marginBottom: 3 }}>SHORT</div>
+                  {Object.entries(data!.gates.gates_short).map(([k, ok]) => (
+                    <div key={k} style={{ display: 'flex', gap: 4, fontSize: 11, lineHeight: 1.5 }}>
+                      <span style={{ color: ok ? 'var(--up)' : 'var(--down)', width: 10 }}>{ok ? '✓' : '✗'}</span>
+                      <span style={{ color: ok ? 'var(--text)' : 'var(--muted)' }}>{k}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Recent events — top 5 only */}
           {data!.recentEvents.length > 0 && (
             <div style={{

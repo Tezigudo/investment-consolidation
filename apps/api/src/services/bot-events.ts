@@ -211,6 +211,17 @@ export async function botStatus(source: string): Promise<BotStatus> {
     health = 'down';
   }
 
+  // Gates: the bot started pushing `payload.gates` on every heartbeat after
+  // the 2026-05-23 upgrade. Older heartbeats won't have it; treat as null.
+  // Pulled from the SAME hb row used for lastHeartbeatTs above, so the gate
+  // snapshot is always consistent with the heartbeat age shown to the user.
+  const hbPayload = (hb?.payload ?? {}) as Record<string, unknown>;
+  const gatesRaw = hbPayload.gates;
+  const gates =
+    gatesRaw && typeof gatesRaw === 'object' && !Array.isArray(gatesRaw)
+      ? (gatesRaw as BotStatus['gates'])
+      : null;
+
   return {
     source,
     boot: boot
@@ -237,6 +248,7 @@ export async function botStatus(source: string): Promise<BotStatus> {
     health,
     isHalted: Boolean(halt),
     recentEvents: recent,
+    gates,
     totals: {
       entries: counts['entry'] ?? 0,
       exits: counts['exit'] ?? 0,

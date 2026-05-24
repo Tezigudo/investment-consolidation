@@ -61,6 +61,10 @@ function eventSummary(ev: BotEventRow): string {
       return `boot · ${(ev.payload?.env as string | undefined) ?? '?'}${ev.payload?.dry_run ? ' · DRY-RUN' : ''}`;
     case 'heartbeat':
       return `heartbeat${ev.equity_usd != null ? ` · eq $${ev.equity_usd.toFixed(2)}` : ''}`;
+    case 'heartbeat_snapshot':
+      // Filtered out of the default recent feed server-side, but cover the
+      // switch so a future opt-in (?kind=heartbeat_snapshot) renders something.
+      return `equity snapshot${ev.equity_usd != null ? ` · $${ev.equity_usd.toFixed(2)}` : ''}`;
     case 'dry_run_signal':
       return `dry signal ${ev.side ?? '?'} @ ${ev.price_usd?.toFixed(0) ?? '?'} (would-trade)`;
     case 'entry':

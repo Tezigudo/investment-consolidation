@@ -104,8 +104,16 @@ export function startJobs() {
     })();
   }
 
-  // Prices every 5 min (stocks) + crypto
-  cron.schedule('*/5 * * * *', async () => {
+  // Prices every 15 min (stocks + crypto). Batched with the binance + onchain
+  // crons below on the same minute marks (`:07, :22, :37, :52`) so the Neon
+  // compute wakes once per 15-min cycle and can auto-suspend between bursts
+  // instead of being pinned by 3 separate `*/5` jobs. Off the `:00` planet-
+  // wide spike per CronCreate guidance — pick non-round minutes.
+  // Stale price ceiling went from 5 → 15 min; dashboard tradeoff worth the
+  // compute-time savings.
+  const FAST_CRON = '7,22,37,52 * * * *';
+
+  cron.schedule(FAST_CRON, async () => {
     try {
       const [stocks, crypto] = await Promise.all([
         distinctSymbols('DIME'),
@@ -118,8 +126,8 @@ export function startJobs() {
     }
   });
 
-  // Binance holdings every 5 min
-  cron.schedule('*/5 * * * *', async () => {
+  // Binance holdings — batched with prices on FAST_CRON for compute-suspend.
+  cron.schedule(FAST_CRON, async () => {
     if (!config.binanceEnabled) return;
     try {
       const fx = await getUSDTHB();
@@ -130,8 +138,8 @@ export function startJobs() {
     }
   });
 
-  // On-chain WLD balance every 5 min — cheap (2-3 RPC reads), no key needed
-  cron.schedule('*/5 * * * *', async () => {
+  // On-chain WLD balance — cheap RPC reads, also on FAST_CRON.
+  cron.schedule(FAST_CRON, async () => {
     if (!config.onchainEnabled) return;
     try {
       const snap = await refreshOnChainWLD();

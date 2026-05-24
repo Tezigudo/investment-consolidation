@@ -104,7 +104,8 @@ export type Currency = 'USD' | 'THB' | 'USDT';
 
 export type BotEventKind =
   | 'boot'                 // bot started; payload has env, dry_run, strategy_name, deploy_start_equity
-  | 'heartbeat'            // periodic ping; payload has equity, halt_present
+  | 'heartbeat'            // periodic ping; payload has equity, halt_present — bot pushes this; API caches in-memory
+  | 'heartbeat_snapshot'   // hourly persisted heartbeat row written by the API for equity history; bot never sends this kind
   | 'dry_run_signal'       // signal fired but no order placed (DRY_RUN); has signal_id, side, price, sl, tp
   | 'entry'                // live entry placed; has signal_id, side, qty, fill_price
   | 'exit'                 // position closed (time-stop / boot-flatten / HALT / kill-switch); has signal_id

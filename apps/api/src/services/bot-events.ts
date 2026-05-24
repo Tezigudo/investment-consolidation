@@ -23,6 +23,28 @@ import { pool } from '../db/client.js';
 const HEALTHY_THRESHOLD_S = 60;      // heartbeat fresher than 60s → green
 const STALE_THRESHOLD_S = 5 * 60;    // 60s–5min → yellow; older → red
 
+// Heartbeats are LIVE STATE not history — store in-memory, not Postgres.
+// The bot pushes a heartbeat every 30s; at 2 bots that's 172.8K inserts/month
+// on Neon, blowing the compute-time quota. Keeping them in-memory drops DB
+// writes by 99.9% while preserving every dashboard feature (lastHeartbeatTs,
+// equity, gates) — those just read from this map instead of the DB.
+//
+// One snapshot per hour is still persisted (HEARTBEAT_SNAPSHOT_INTERVAL_MS)
+// so we keep coarse equity history for charts.
+//
+// Tradeoff: on API restart the map is empty until the next heartbeat (~30s).
+// Until then the dashboard shows the same "no heartbeat yet" state it does
+// for a brand-new bot. That's the existing cold-start behavior — no new bug.
+interface HeartbeatState {
+  botTs: number;            // ms (bot's clock)
+  receivedAt: number;       // ms (server's clock)
+  equityUsd: number | null;
+  gates: GateStatus | null;
+  lastPersistedTs: number;  // ms, last time we INSERTed a snapshot to DB
+}
+const heartbeatCache = new Map<string, HeartbeatState>();
+const HEARTBEAT_SNAPSHOT_INTERVAL_MS = 60 * 60 * 1000;  // 1 hour
+
 // Returns a valid GateStatus only if every field the UI walks (gates_long,
 // gates_short, missing_long, missing_short, values) is present with the
 // expected shape. A partial / drifted payload becomes null so the dashboard
@@ -45,6 +67,34 @@ function extractGates(raw: unknown): GateStatus | null {
 }
 
 export async function insertBotEvent(p: BotEventPayload): Promise<{ inserted: boolean; id: number | null }> {
+  // Heartbeats: update in-memory cache. Persist one snapshot/hour for history.
+  if (p.kind === 'heartbeat') {
+    const cur = heartbeatCache.get(p.source);
+    const payloadGates = (p.payload as Record<string, unknown> | undefined)?.gates;
+    heartbeatCache.set(p.source, {
+      botTs: p.bot_ts_ms,
+      receivedAt: Date.now(),
+      equityUsd: p.equity_usd ?? cur?.equityUsd ?? null,
+      gates: extractGates(payloadGates) ?? cur?.gates ?? null,
+      lastPersistedTs: cur?.lastPersistedTs ?? 0,
+    });
+    // Persist one heartbeat per hour as a snapshot — gives coarse equity
+    // history for the dashboard's longer-range charts without exploding the
+    // table again.
+    const now = Date.now();
+    const lastPersisted = cur?.lastPersistedTs ?? 0;
+    if (now - lastPersisted < HEARTBEAT_SNAPSHOT_INTERVAL_MS) {
+      // Outbox semantics: caller sees inserted=true so its cursor advances.
+      // We return id=null because nothing was actually written.
+      return { inserted: true, id: null };
+    }
+    // Otherwise fall through to the INSERT below. Update lastPersistedTs
+    // first so concurrent heartbeats don't double-insert in the race window.
+    heartbeatCache.set(p.source, {
+      ...heartbeatCache.get(p.source)!,
+      lastPersistedTs: now,
+    });
+  }
   const res = await pool.query<{ id: string }>(
     `INSERT INTO bot_events (
        source, external_id, bot_ts, received_at, kind,
@@ -141,13 +191,15 @@ export async function recentBotEvents(
 
 export async function botStatus(source: string): Promise<BotStatus> {
   const now = Date.now();
+  // Heartbeat fields (lastTs, equity, gates) come from the in-memory cache —
+  // see heartbeatCache above. No DB query needed for live state. The DB is
+  // only queried for events that have actual history: boot, halt, equity
+  // snapshots (hourly heartbeat snapshot OR entry/exit), counts, recent events.
+  const hb = heartbeatCache.get(source);
 
-  // Parallelize the 4 independent first-pass queries. The halt query
-  // depends on the boot ts so it runs in the second wave. Recent +
-  // counts are independent of all the others.
+  // Parallelize the independent first-pass queries.
   const [
     { rows: bootRows },
-    { rows: hbRows },
     { rows: eqRows },
     { rows: countRows },
     recent,
@@ -155,12 +207,6 @@ export async function botStatus(source: string): Promise<BotStatus> {
     pool.query<BotEventDbRow>(
       `SELECT * FROM bot_events
        WHERE source = $1 AND kind = 'boot'
-       ORDER BY bot_ts DESC LIMIT 1`,
-      [source],
-    ),
-    pool.query<BotEventDbRow>(
-      `SELECT * FROM bot_events
-       WHERE source = $1 AND kind = 'heartbeat'
        ORDER BY bot_ts DESC LIMIT 1`,
       [source],
     ),
@@ -191,16 +237,18 @@ export async function botStatus(source: string): Promise<BotStatus> {
   for (const r of countRows) counts[r.kind] = Number(r.count);
 
   const boot = bootRows[0];
-  const hb = hbRows[0];
   const eq = eqRows[0];
   const halt = haltRows[0];
 
-  const lastHeartbeatTs = hb ? Number(hb.bot_ts) : null;
+  // Live heartbeat state comes from the in-memory cache. Fall back to null
+  // if the cache is cold (e.g. just after API restart) — same UX as a brand-
+  // new bot until the next heartbeat lands.
+  const lastHeartbeatTs = hb?.botTs ?? null;
   const heartbeatAgeS =
     lastHeartbeatTs != null ? Math.max(0, Math.floor((now - lastHeartbeatTs) / 1000)) : null;
 
-  // Deploy-start equity comes from boot payload; current equity from the
-  // most recent equity-bearing event.
+  // Deploy-start equity comes from boot payload; current equity prefers the
+  // live heartbeat (always fresh) over the last persisted equity event.
   const bootPayload = (boot?.payload ?? {}) as Record<string, unknown>;
   const deployStartEquityUsd =
     typeof bootPayload.deploy_start_equity === 'number'
@@ -214,7 +262,7 @@ export async function botStatus(source: string): Promise<BotStatus> {
     deployStartEquityUsd != null && killSwitchFraction != null
       ? deployStartEquityUsd * killSwitchFraction
       : null;
-  const currentEquityUsd = eq?.equity_usd ?? null;
+  const currentEquityUsd = hb?.equityUsd ?? eq?.equity_usd ?? null;
   const killSwitchHeadroomPct =
     currentEquityUsd != null && killSwitchLevelUsd != null && killSwitchLevelUsd > 0
       ? ((currentEquityUsd - killSwitchLevelUsd) / killSwitchLevelUsd) * 100
@@ -233,15 +281,10 @@ export async function botStatus(source: string): Promise<BotStatus> {
     health = 'down';
   }
 
-  // Gates: the bot started pushing `payload.gates` on every heartbeat after
-  // the 2026-05-23 upgrade. Older heartbeats won't have it; treat as null.
-  // Pulled from the SAME hb row used for lastHeartbeatTs above, so the gate
-  // snapshot is always consistent with the heartbeat age shown to the user.
-  // Per-field shape check (matches the pattern used for boot payload above) —
-  // a partial / drifted payload becomes null rather than crashing the UI on
-  // Object.entries(gates_long) or missing_long.length.
-  const hbPayload = (hb?.payload ?? {}) as Record<string, unknown>;
-  const gates = extractGates(hbPayload.gates);
+  // Gates: pulled from the in-memory heartbeat cache (extracted+validated by
+  // extractGates at write time). Always consistent with lastHeartbeatTs since
+  // they come from the same cache entry.
+  const gates = hb?.gates ?? null;
 
   return {
     source,

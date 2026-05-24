@@ -377,6 +377,13 @@ export async function runPgMigrations(pool: Pool) {
   const { rows } = await pool.query<{ version: number }>('SELECT version FROM _migrations');
   const applied = new Set(rows.map((r) => Number(r.version)));
 
+  // Fast path: if the head migration is already applied, every Fly cold-start
+  // is just the two cheap queries above — no dedicated `pool.connect()`, no
+  // BEGIN/COMMIT pair, no transaction overhead. Saves a connect round-trip
+  // per redeploy and lets the Neon compute stay parked sooner.
+  const head = PG_MIGRATIONS[PG_MIGRATIONS.length - 1];
+  if (head && applied.has(head.version)) return;
+
   const client = await pool.connect();
   try {
     for (const m of PG_MIGRATIONS) {

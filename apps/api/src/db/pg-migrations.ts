@@ -363,6 +363,28 @@ export const PG_MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_bot_events_source_ts  ON bot_events(source, bot_ts DESC);
     `,
   },
+  {
+    version: 14,
+    name: 'bot_events_kind_add_heartbeat_snapshot',
+    up: `
+      -- Extend the kind CHECK constraint to allow 'heartbeat_snapshot'.
+      -- This kind is API-internal — the bot still POSTs kind='heartbeat',
+      -- and bot-events.ts rewrites it to 'heartbeat_snapshot' on the hourly
+      -- persistence path so the cleanup script can safely target legacy
+      -- rows (kind='heartbeat') without nuking the new equity-history rows.
+      --
+      -- Postgres' default name for an unnamed column CHECK is
+      -- <table>_<column>_check, so the DROP is deterministic. The IF EXISTS
+      -- keeps this idempotent if a re-run ever hits the new state.
+      ALTER TABLE bot_events DROP CONSTRAINT IF EXISTS bot_events_kind_check;
+      ALTER TABLE bot_events ADD CONSTRAINT bot_events_kind_check CHECK (kind IN (
+        'boot', 'heartbeat', 'heartbeat_snapshot', 'dry_run_signal',
+        'entry', 'exit',
+        'kill_switch', 'halt', 'boot_flatten',
+        'order_failed', 'signal_skipped'
+      ));
+    `,
+  },
 ];
 
 export async function runPgMigrations(pool: Pool) {

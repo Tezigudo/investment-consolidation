@@ -18,7 +18,11 @@ import {
 } from '../services/bot-events.js';
 import type { BotEventKind } from '@consolidate/shared';
 
-const KIND = z.enum([
+// Kinds the bot is allowed to POST. 'heartbeat_snapshot' is intentionally
+// absent — it's API-internal (services/bot-events.ts rewrites kind='heartbeat'
+// to 'heartbeat_snapshot' on the hourly persist path). A bot pushing the
+// snapshot kind directly would corrupt the cleanup semantics.
+const POST_KIND = z.enum([
   'boot',
   'heartbeat',
   'dry_run_signal',
@@ -31,11 +35,19 @@ const KIND = z.enum([
   'signal_skipped',
 ]);
 
+// Kinds queryable from the GET /bot-events filter — includes the internal
+// 'heartbeat_snapshot' so callers can opt-in to the equity-history rows
+// (which are excluded from the default recentBotEvents feed).
+const QUERY_KIND = z.enum([
+  ...POST_KIND.options,
+  'heartbeat_snapshot',
+] as const);
+
 const EventBody = z.object({
   source: z.string().min(1).max(64),
   external_id: z.string().min(1).max(128),
   bot_ts_ms: z.number().int().positive(),
-  kind: KIND,
+  kind: POST_KIND,
   signal_id: z.string().max(64).nullable().optional(),
   strategy: z.string().max(64).nullable().optional(),
   side: z.enum(['long', 'short']).nullable().optional(),
@@ -121,7 +133,7 @@ export async function botEventRoutes(app: FastifyInstance) {
     const source = q.source || 'snapback-btc';
     const opts: { kind?: BotEventKind; since?: number; limit?: number } = {};
     if (q.kind) {
-      const k = KIND.safeParse(q.kind);
+      const k = QUERY_KIND.safeParse(q.kind);
       if (!k.success) {
         reply.code(400);
         return { error: 'invalid_kind' };

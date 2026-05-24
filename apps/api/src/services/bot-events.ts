@@ -88,18 +88,18 @@ export async function insertBotEvent(p: BotEventPayload): Promise<{ inserted: bo
       // We return id=null because nothing was actually written.
       return { inserted: true, id: null };
     }
-    // Otherwise fall through to the INSERT below. Update lastPersistedTs
-    // first so concurrent heartbeats don't double-insert in the race window.
-    heartbeatCache.set(p.source, {
-      ...heartbeatCache.get(p.source)!,
-      lastPersistedTs: now,
-    });
     // Tag the persisted row as 'heartbeat_snapshot' (distinct from the bot's
     // wire kind 'heartbeat') so cleanup scripts can safely DELETE WHERE
     // kind='heartbeat' to purge legacy dead rows without nuking the new
     // hourly snapshots. The recentEvents feed also filters this kind out so
     // the dashboard's activity panel stays focused on real events.
     p = { ...p, kind: 'heartbeat_snapshot' };
+    // lastPersistedTs is set AFTER the INSERT below succeeds. Node is
+    // single-threaded so the "race window" concern doesn't apply — but a
+    // transient INSERT failure (Neon cold-start timeout, network blip)
+    // shouldn't silently swallow a full hour of equity history. If the
+    // INSERT throws, lastPersistedTs stays at its prior value so the next
+    // heartbeat retries the snapshot immediately.
   }
   const res = await pool.query<{ id: string }>(
     `INSERT INTO bot_events (
@@ -126,6 +126,17 @@ export async function insertBotEvent(p: BotEventPayload): Promise<{ inserted: bo
       JSON.stringify(p.payload ?? {}),
     ],
   );
+  // Heartbeat-snapshot success path: stamp lastPersistedTs only now, so a
+  // throw from pool.query above leaves the cache untouched and the next
+  // heartbeat re-attempts the snapshot. Counts both INSERTed and ON-CONFLICT
+  // DO-NOTHING cases (rowCount === 0) as "the snapshot is persisted for this
+  // hour" — the conflict means someone else already wrote it.
+  if (p.kind === 'heartbeat_snapshot') {
+    const cached = heartbeatCache.get(p.source);
+    if (cached) {
+      heartbeatCache.set(p.source, { ...cached, lastPersistedTs: Date.now() });
+    }
+  }
   if (res.rowCount === 0) return { inserted: false, id: null };
   return { inserted: true, id: Number(res.rows[0].id) };
 }

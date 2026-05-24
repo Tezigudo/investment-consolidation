@@ -377,12 +377,20 @@ export async function runPgMigrations(pool: Pool) {
   const { rows } = await pool.query<{ version: number }>('SELECT version FROM _migrations');
   const applied = new Set(rows.map((r) => Number(r.version)));
 
-  // Fast path: if the head migration is already applied, every Fly cold-start
-  // is just the two cheap queries above — no dedicated `pool.connect()`, no
-  // BEGIN/COMMIT pair, no transaction overhead. Saves a connect round-trip
-  // per redeploy and lets the Neon compute stay parked sooner.
+  // Fast path: if the head migration AND all earlier migrations are applied,
+  // every Fly cold-start is just the two cheap queries above — no dedicated
+  // `pool.connect()`, no BEGIN/COMMIT pair, no transaction overhead. Saves a
+  // connect round-trip per redeploy and lets the Neon compute stay parked
+  // sooner. The full-coverage check guards against a sparse `applied` set
+  // (e.g. partial manual application, leftovers from the historical sqlite→pg
+  // cutover the file header describes) where head=true but earlier=missing.
   const head = PG_MIGRATIONS[PG_MIGRATIONS.length - 1];
-  if (head && applied.has(head.version)) return;
+  if (head && applied.has(head.version)) {
+    const missingEarlier = PG_MIGRATIONS.some(
+      (m) => m.version < head.version && !applied.has(m.version),
+    );
+    if (!missingEarlier) return;
+  }
 
   const client = await pool.connect();
   try {

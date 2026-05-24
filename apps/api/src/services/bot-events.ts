@@ -94,6 +94,12 @@ export async function insertBotEvent(p: BotEventPayload): Promise<{ inserted: bo
       ...heartbeatCache.get(p.source)!,
       lastPersistedTs: now,
     });
+    // Tag the persisted row as 'heartbeat_snapshot' (distinct from the bot's
+    // wire kind 'heartbeat') so cleanup scripts can safely DELETE WHERE
+    // kind='heartbeat' to purge legacy dead rows without nuking the new
+    // hourly snapshots. The recentEvents feed also filters this kind out so
+    // the dashboard's activity panel stays focused on real events.
+    p = { ...p, kind: 'heartbeat_snapshot' };
   }
   const res = await pool.query<{ id: string }>(
     `INSERT INTO bot_events (
@@ -171,6 +177,12 @@ export async function recentBotEvents(
   if (opts.kind) {
     conditions.push(`kind = $${nextArg++}`);
     args.push(opts.kind);
+  } else {
+    // Default feed excludes the hourly equity snapshots — those are stored
+    // for charting only, not user-facing activity. Explicit kind override
+    // (e.g. `kind: 'heartbeat_snapshot'`) still works for callers that want
+    // them.
+    conditions.push(`kind <> 'heartbeat_snapshot'`);
   }
   // Explicit null/undefined check — since=0 is a valid "give me everything
   // from epoch onward" timestamp (Sourcery flagged the falsy-guard bug).

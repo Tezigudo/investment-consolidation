@@ -1109,6 +1109,7 @@ function summarizeBotEvent(ev: BotEventRow): string {
   switch (ev.kind) {
     case 'boot': return `boot · ${(ev.payload?.env as string) ?? '?'}${ev.payload?.dry_run ? ' · dry' : ''}`;
     case 'heartbeat': return ev.equity_usd != null ? `heartbeat · $${ev.equity_usd.toFixed(2)}` : 'heartbeat';
+    case 'heartbeat_snapshot': return ev.equity_usd != null ? `snapshot · $${ev.equity_usd.toFixed(2)}` : 'snapshot';
     case 'dry_run_signal': return `dry ${ev.side ?? '?'} @ ${ev.price_usd?.toFixed(0) ?? '?'}`;
     case 'entry': return `${ev.side ?? '?'} entry @ ${ev.price_usd?.toFixed(0) ?? '?'}`;
     case 'exit': return `exit · ${(ev.payload?.reason as string) ?? '?'}`;

@@ -3,12 +3,18 @@
 // views can't drift when bots are added/removed.
 //
 // The string must match what the bot sends via `consolidate_push.py` (env
-// `CONSOLIDATE_SOURCE`) — currently the v1 leg uses the default 'snapback-btc'
-// and the Donchian leg sets 'snapback-btc-donchian' in its systemd env.
+// `CONSOLIDATE_SOURCE`). Current legs:
+//   - v1            → default 'snapback-btc'
+//   - Donchian-v3   → 'snapback-btc-donchian'
+//   - CnH HYBRID-short → 'snapback-btc-cnh-short'
 
-export type BotSource = 'snapback-btc' | 'snapback-btc-donchian';
+export type BotSource =
+  | 'snapback-btc'
+  | 'snapback-btc-donchian'
+  | 'snapback-btc-cnh-short';
 
 export const BOT_SOURCES: readonly BotSource[] = [
   'snapback-btc',
   'snapback-btc-donchian',
+  'snapback-btc-cnh-short',
 ] as const;

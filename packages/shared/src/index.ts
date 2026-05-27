@@ -142,7 +142,11 @@ export interface BotEventRow extends BotEventPayload {
 export interface GateStatus {
   strategy: string;
   would_fire: 'long' | 'short' | null;
-  values: Record<string, number | null>;
+  // Per-strategy diagnostic values. Mostly numeric (RSI, price, slope, etc.),
+  // but some strategies surface non-numeric state here — e.g. cnh-hybrid-short-v1
+  // ships `last_admitted_pattern` (dict snapshot) and `pattern_fired` (string).
+  // `fmtGateValue` in apps/web/src/lib/gates.ts handles all three shapes.
+  values: Record<string, number | string | Record<string, unknown> | null>;
   thresholds: Record<string, number | boolean | null>;
   gates_long: Record<string, boolean>;
   gates_short: Record<string, boolean>;

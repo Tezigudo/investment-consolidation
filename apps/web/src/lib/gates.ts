@@ -20,6 +20,10 @@ export const GATE_LABELS: Record<string, string> = {
   breakdown_below_80bar: 'Close < 80-bar low',
   slope_up: 'EMA-slope ≥ +3%',
   slope_down: 'EMA-slope ≤ −3%',
+  // cnh-hybrid-short-v1 (DT + ICnH on 4h)
+  pattern_admitted_this_bar: 'Pattern admitted (DT or ICnH)',
+  tp_slot_below_entry: 'EMA(100) below close (TP slot)',
+  icnh_lookback_ema_xd: 'EMA24 cross-down within lookback',
 };
 
 export function gateLabel(key: string): string {
@@ -29,12 +33,28 @@ export function gateLabel(key: string): string {
 // Formats a GateStatus value field for display. Per-key formatting because
 // rsi is a 0-100 scalar, vol_ratio is a multiple, funding/slope are
 // fractions that read better as percentages, and prices are dollar amounts.
-export function fmtGateValue(k: string, v: number | null): string {
+//
+// Runtime `v` may not be numeric — the cnh-hybrid-short-v1 strategy includes
+// `last_admitted_pattern` (dict) and `pattern_fired` (string) inside its
+// values payload. Defensive type-check so we never call `.toFixed` on a
+// non-number and crash the whole card.
+export function fmtGateValue(k: string, v: unknown): string {
   if (v == null) return '—';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'object') {
+    try {
+      const s = JSON.stringify(v);
+      // Truncate so a multi-field admitted-pattern dict can't push the values
+      // column arbitrarily wide. 60 chars fits the dashboard layout.
+      return s.length > 60 ? s.slice(0, 57) + '…' : s;
+    } catch { return String(v); }
+  }
+  if (typeof v !== 'number' || Number.isNaN(v)) return String(v);
   if (k === 'rsi') return v.toFixed(1);
   if (k === 'vol_ratio') return `${v.toFixed(2)}×`;
   if (k === 'funding_rate') return `${(v * 100).toFixed(4)}%`;
   if (k === 'slope') return `${(v * 100).toFixed(2)}%`;
+  if (k === 'atr') return v.toFixed(2);
   if (Math.abs(v) >= 1000) {
     return `$${v.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
   }

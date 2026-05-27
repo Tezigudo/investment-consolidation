@@ -334,9 +334,9 @@ export function Overview({ data, currency, setCurrency, privacy, setPrivacy }: P
         <AttributionMobile privacy={privacy} />
 
         {/* snapback bots — read-only status pushed from the DO droplet.
-            Two parallel legs since 2026-05-23: v1 (main account) + Donchian-v3
-            cons (sub-account). Each pushes with a distinct source. Source list
-            is shared with the desktop dashboard via lib/bots.ts. */}
+            Three parallel legs: v1 (main account), Donchian-v3 cons (sub-account),
+            and CnH HYBRID-short (sub-account). Each pushes with a distinct source.
+            Source list is shared with the desktop dashboard via lib/bots.ts. */}
         <div style={M.section}>Trading bots</div>
         {BOT_SOURCES.map((source) => (
           <BotStatusMobile key={source} source={source} />

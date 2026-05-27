@@ -42,7 +42,12 @@ export function fmtGateValue(k: string, v: unknown): string {
   if (v == null) return '—';
   if (typeof v === 'string') return v;
   if (typeof v === 'object') {
-    try { return JSON.stringify(v); } catch { return String(v); }
+    try {
+      const s = JSON.stringify(v);
+      // Truncate so a multi-field admitted-pattern dict can't push the values
+      // column arbitrarily wide. 60 chars fits the dashboard layout.
+      return s.length > 60 ? s.slice(0, 57) + '…' : s;
+    } catch { return String(v); }
   }
   if (typeof v !== 'number' || Number.isNaN(v)) return String(v);
   if (k === 'rsi') return v.toFixed(1);

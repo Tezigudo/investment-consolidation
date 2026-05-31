@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import { config } from './config.js';
-import './db/client.js'; // triggers migrations
+import { ensureMigrations } from './db/client.js'; // run AFTER listen (below)
 import { portfolioRoutes } from './routes/portfolio.js';
 import { tradeRoutes } from './routes/trades.js';
 import { importRoutes } from './routes/import.js';
@@ -74,6 +74,11 @@ try {
   // still proxies /api → 127.0.0.1 on the desktop side, so nothing
   // changes there.
   await app.listen({ port: config.API_PORT, host: '0.0.0.0' });
+  // Migrations run AFTER we're listening, in the background with retry. A down
+  // DB (e.g. Neon quota suspension) must never prevent the API from listening —
+  // /health has to answer so the deploy health-check passes and the app stays
+  // reachable. ensureMigrations self-heals when the DB returns.
+  void ensureMigrations();
   startJobs();
   app.log.info(
     `Binance: ${config.binanceEnabled ? 'enabled' : 'disabled (set BINANCE_API_KEY/SECRET)'}`,

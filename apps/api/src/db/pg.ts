@@ -12,6 +12,11 @@ export const pgPool = new pg.Pool({
   connectionString: config.databaseUrl,
   max: 10,
   idleTimeoutMillis: 30_000,
+  // Fail a connect attempt after 10s instead of hanging indefinitely. When the
+  // DB is unreachable (e.g. Neon free-tier compute-quota suspension), this lets
+  // callers — especially the boot-time migration retry loop in client.ts — get
+  // a prompt error and retry, rather than blocking forever.
+  connectionTimeoutMillis: 10_000,
 });
 
 pgPool.on('error', (err) => {

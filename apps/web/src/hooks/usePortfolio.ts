@@ -18,3 +18,13 @@ export function useTrades() {
     staleTime: 60_000,
   });
 }
+
+export function useFuturesAnalytics(rangeDays = 30) {
+  return useQuery({
+    queryKey: ['futures-analytics', rangeDays],
+    queryFn: () => api.futuresAnalytics(rangeDays),
+    refetchInterval: 30_000,   // DB refreshed by the futures cron; mirror /portfolio
+    refetchIntervalInBackground: false,
+    staleTime: 15_000,
+  });
+}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Dashboard } from './views/Dashboard';
+import { Futures } from './views/Futures';
 import { MobileShell } from './views/MobileShell';
 import { useIsMobile } from './lib/useIsMobile';
 import { themeVars } from './lib/theme';
@@ -39,6 +40,7 @@ export function App() {
   const [dark, setDark] = useState(init.dark);
   const [privacy, setPrivacy] = useState(init.privacy);
   const [tweaksOpen, setTweaksOpen] = useState(false);
+  const [view, setView] = useState<'portfolio' | 'futures'>('portfolio');
   const [apiUrlInput, setApiUrlInput] = useState(getStoredApiUrl());
   const [apiTokenInput, setApiTokenInput] = useState(getStoredApiToken());
   const [apiSavedMsg, setApiSavedMsg] = useState<string | null>(null);
@@ -78,7 +80,34 @@ export function App() {
           setPrivacy={setPrivacy}
         />
       ) : (
-        <Dashboard currency={currency} setCurrency={setCurrency} privacy={privacy} />
+        <>
+          {/* Desktop top-level view switch. Mobile gets its own tab in MobileShell. */}
+          <div style={{ display: 'flex', gap: 6, padding: '10px 16px 0', alignItems: 'center' }}>
+            {(['portfolio', 'futures'] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                style={{
+                  padding: '6px 14px',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  borderRadius: 8,
+                  cursor: 'pointer',
+                  border: '1px solid var(--border)',
+                  background: view === v ? 'var(--accent)' : 'transparent',
+                  color: view === v ? '#fff' : 'var(--text)',
+                }}
+              >
+                {v === 'portfolio' ? 'Portfolio' : 'Futures'}
+              </button>
+            ))}
+          </div>
+          {view === 'portfolio' ? (
+            <Dashboard currency={currency} setCurrency={setCurrency} privacy={privacy} />
+          ) : (
+            <Futures privacy={privacy} />
+          )}
+        </>
       )}
 
       {!isMobile && tweaksOpen && (

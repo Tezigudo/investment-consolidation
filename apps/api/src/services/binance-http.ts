@@ -21,6 +21,11 @@ import crypto from 'node:crypto';
 import { config } from '../config.js';
 
 const BASE = 'https://api.binance.com';
+// USDT-M Futures REST base. Futures endpoints (/fapi/*) live on a different
+// host than spot (/api/*, /sapi/*) but return the same X-MBX-USED-WEIGHT-1m
+// header, so they ride the same weight pacer below. fapi has its own weight
+// budget per IP, so sharing the queue is conservative (we never UNDER-throttle).
+const FAPI_BASE = 'https://fapi.binance.com';
 
 // Floor between any two requests. The weight-aware pacer
 // (applyWeightBackpressure) is the primary throttle for /api/* endpoints.
@@ -223,5 +228,30 @@ export async function binancePublicGet<T>(
     const qs = buildQuery(params);
     const url = qs.toString() ? `${BASE}${path}?${qs.toString()}` : `${BASE}${path}`;
     return fetch(url);
+  });
+}
+
+// Signed GET against the USDT-M Futures host (fapi). READ-ONLY by contract:
+// every caller in binance-futures.ts is a GET. Never add POST/DELETE order
+// endpoints here — this whole app must not be able to trade. Uses the futures
+// explicit futures key (config no longer falls back to the spot key) and the
+// shared weight pacer. Only used when a Fly-direct futures key is set; the
+// droplet relay path doesn't touch this.
+export async function binanceFuturesSignedGet<T>(
+  path: string,
+  params: Record<string, string | number> = {},
+): Promise<T> {
+  if (!config.binanceFuturesEnabled) {
+    throw new Error(
+      'Binance Futures is not configured. Set BINANCE_FUTURES_API_KEY/SECRET ' +
+        '(or a futures-enabled BINANCE_API_KEY/SECRET) in .env',
+    );
+  }
+  return runWithRetries<T>(path, () => {
+    const qs = buildQuery({ ...params, timestamp: Date.now(), recvWindow: 10_000 });
+    qs.append('signature', sign(qs.toString(), config.binanceFuturesSecret));
+    return fetch(`${FAPI_BASE}${path}?${qs.toString()}`, {
+      headers: { 'X-MBX-APIKEY': config.binanceFuturesKey },
+    });
   });
 }

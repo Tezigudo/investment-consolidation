@@ -9,6 +9,7 @@ import { refreshDailyUSDTHB } from '../services/fx-history.js';
 import { refreshOnChainWLD } from '../services/onchain.js';
 import { warmDailyHistoryBatch } from '../services/price-history.js';
 import { captureSnapshotNow, snapshotCount, backfillSnapshots } from '../services/portfolio-history.js';
+import { refreshFuturesLive, syncFuturesIncome } from '../services/futures-analytics.js';
 
 // Symbols held on-chain that need a USDT price even though we never
 // trade them through Binance. Keeps the crypto price refresh aware of
@@ -104,6 +105,20 @@ export function startJobs() {
     })();
   }
 
+  // Futures: one-shot warm on boot — lands the first equity snapshot and runs
+  // the cold-start income backfill (reaches back 1y on an empty table).
+  if (config.binanceFuturesEnabled) {
+    void (async () => {
+      try {
+        await refreshFuturesLive();
+        const r = await syncFuturesIncome();
+        if (!r.skipped) console.log(`[jobs] futures warm-up: income +${r.inserted}`);
+      } catch (e) {
+        console.warn('[jobs] futures warm-up failed:', (e as Error).message);
+      }
+    })();
+  }
+
   // Prices every 15 min (stocks + crypto). Batched with the binance + onchain
   // crons below on the same minute marks (`:07, :22, :37, :52`) so the Neon
   // compute wakes once per 15-min cycle and can auto-suspend between bursts
@@ -135,6 +150,31 @@ export function startJobs() {
       console.log('[jobs] binance holdings refreshed');
     } catch (e) {
       console.warn('[jobs] binance failed:', (e as Error).message);
+    }
+  });
+
+  // Binance Futures account + positions — same FAST_CRON. The hourly equity
+  // snapshot is throttled inside refreshFuturesLive (≤1 insert/hr) so this
+  // doesn't bloat Neon. No-ops cleanly if the key lacks futures permission.
+  cron.schedule(FAST_CRON, async () => {
+    if (!config.binanceFuturesEnabled) return;
+    try {
+      const r = await refreshFuturesLive();
+      if (!r.skipped) console.log('[jobs] futures live refreshed');
+    } catch (e) {
+      console.warn('[jobs] futures live failed:', (e as Error).message);
+    }
+  });
+
+  // Futures income ledger (realized PnL / funding / commission) — incremental,
+  // hourly. Cheap after the cold-start backfill (cursor = last stored ts).
+  cron.schedule('17 * * * *', async () => {
+    if (!config.binanceFuturesEnabled) return;
+    try {
+      const r = await syncFuturesIncome();
+      if (!r.skipped && r.inserted) console.log(`[jobs] futures income: +${r.inserted}`);
+    } catch (e) {
+      console.warn('[jobs] futures income failed:', (e as Error).message);
     }
   });
 

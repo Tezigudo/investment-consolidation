@@ -189,3 +189,118 @@ export interface BotStatus {
     killSwitchFires: number;
   };
 }
+
+// ─── Binance USDT-M Futures analytics ────────────────────────────────────────
+// Two data sources, kept DISTINCT on purpose (see CLAUDE.md "both sources"):
+//   - "account" = ground truth from the Binance futures account the
+//     consolidate API key belongs to (fapi /v3/account, /v1/income,
+//     /v2/positionRisk). Reflects ALL futures activity on that account, not
+//     only the snapback bot's. Requires a futures-enabled read-only key.
+//   - "bot"     = per-leg attribution synthesized from bot_events (entry→exit
+//     pairs + hourly heartbeat equity). What the snapback legs actually did.
+// These MAY be different accounts — the consolidate key might not be the bot's
+// account. The UI shows them side-by-side and never assumes equality. The
+// account side degrades to available=false when no futures key is configured;
+// the bot side always works (it reads bot_events). All monetary values USDT.
+
+export type FuturesIncomeType =
+  | 'REALIZED_PNL'
+  | 'FUNDING_FEE'
+  | 'COMMISSION'
+  | 'TRANSFER'
+  | 'OTHER';
+
+export interface FuturesPosition {
+  symbol: string;
+  positionSide: string;        // BOTH / LONG / SHORT
+  positionAmt: number;         // signed; < 0 = short
+  entryPrice: number;
+  markPrice: number;
+  unrealizedPnlUsd: number;
+  leverage: number;
+  liquidationPrice: number | null;
+  notionalUsd: number;         // |positionAmt| × markPrice
+  updatedAt: number;           // ms
+}
+
+export interface FuturesEquityPoint {
+  ts: number;                  // ms
+  walletBalanceUsd: number;
+  marginBalanceUsd: number;    // wallet + unrealized
+}
+
+export interface FuturesIncomeBucket {
+  day: string;                 // YYYY-MM-DD (UTC)
+  realizedPnlUsd: number;
+  fundingUsd: number;          // net signed: + received, − paid
+  commissionUsd: number;       // signed (negative = paid)
+  netUsd: number;              // realized + funding + commission
+}
+
+export interface FuturesAccountSummary {
+  available: boolean;          // false when no futures key / key lacks perms
+  asOf: number | null;         // ms of latest account snapshot, null if none
+  walletBalanceUsd: number | null;
+  marginBalanceUsd: number | null;
+  unrealizedPnlUsd: number | null;
+  availableBalanceUsd: number | null;
+  // Aggregated over the loaded income window:
+  realizedPnlUsd: number;
+  fundingPaidUsd: number;      // sum of funding PAID, reported as a positive number
+  fundingReceivedUsd: number;  // sum of funding RECEIVED, positive
+  fundingNetUsd: number;       // received − paid (signed)
+  commissionUsd: number;       // total commission paid, positive number
+  netIncomeUsd: number;        // realized + fundingNet − commission
+}
+
+// Per-leg attribution from bot_events: pair each entry with its next exit.
+export interface FuturesBotTrade {
+  source: string;              // bot source (leg), e.g. 'snapback-btc-cnh-short'
+  strategy: string | null;
+  side: 'long' | 'short' | null;
+  entryTs: number;
+  exitTs: number | null;       // null = still open
+  entryPriceUsd: number | null;
+  exitPriceUsd: number | null;
+  qty: number | null;
+  notionalUsd: number | null;
+  pnlUsd: number | null;       // equity-delta if available, else price move × qty
+  exitReason: string | null;
+}
+
+export interface FuturesBotLegStats {
+  source: string;
+  strategy: string | null;
+  trades: number;              // closed trades
+  wins: number;
+  losses: number;
+  winRatePct: number | null;
+  netPnlUsd: number;
+  currentEquityUsd: number | null;
+  isHalted: boolean;
+  openTrade: boolean;          // an entry without a matching exit
+}
+
+export interface FuturesReconciliation {
+  futuresWalletUsd: number | null;
+  botEquityTotalUsd: number | null;
+  deltaUsd: number | null;
+  likelySameAccount: boolean | null;  // |delta| small vs wallet
+  note: string;
+}
+
+export interface FuturesAnalytics {
+  generatedAt: number;
+  rangeDays: number;
+  // ── Account side (Binance ground truth; may be empty/disabled) ──
+  account: FuturesAccountSummary;
+  equityCurve: FuturesEquityPoint[];   // from futures_account_snapshot
+  incomeByDay: FuturesIncomeBucket[];  // realized / funding / commission per day
+  positions: FuturesPosition[];        // current open futures positions
+  // ── Bot side (always available from bot_events) ──
+  botLegs: FuturesBotLegStats[];
+  botTrades: FuturesBotTrade[];
+  botEquityCurve: { ts: number; equityUsd: number; source: string }[];
+  // ── Reconciliation (Phase 2; null until built) ──
+  reconciliation: FuturesReconciliation | null;
+}

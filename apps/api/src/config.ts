@@ -24,6 +24,16 @@ const EnvSchema = z.object({
   BINANCE_API_KEY: z.string().default(''),
   BINANCE_API_SECRET: z.string().default(''),
 
+  // Optional dedicated USDT-M Futures read-only key. If unset, the futures
+  // analytics fall back to the spot key above — which only works if THAT key
+  // has "Enable Futures" read permission. Many spot keys don't, so a futures
+  // call may 401/-2015 at runtime; binance-futures.ts catches that and the
+  // analytics endpoint degrades to account.available=false (the bot side still
+  // works). Use a separate key here if the spot key lacks futures access, or
+  // if the bot trades on a different account than the spot key belongs to.
+  BINANCE_FUTURES_API_KEY: z.string().default(''),
+  BINANCE_FUTURES_API_SECRET: z.string().default(''),
+
   FINNHUB_API_KEY: z.string().optional(),
 
   DIME_PDF_PASSWORD: z.string().optional(),
@@ -76,6 +86,9 @@ export type AppConfig = z.infer<typeof EnvSchema> & {
   dbPath: string;
   databaseUrl: string;
   binanceEnabled: boolean;
+  binanceFuturesEnabled: boolean;
+  binanceFuturesKey: string;
+  binanceFuturesSecret: string;
   onchainEnabled: boolean;
   authEnabled: boolean;
 };
@@ -102,6 +115,19 @@ function build(): AppConfig {
     dbPath: path.join(dataDir, 'consolidate.sqlite'),
     databaseUrl: env.DATABASE_URL,
     binanceEnabled: Boolean(env.BINANCE_API_KEY && env.BINANCE_API_SECRET),
+    // Futures-direct (Fly cron hits fapi itself) requires an EXPLICIT futures
+    // key — NO fallback to the spot key. The spot key almost never has the
+    // "Enable Futures" permission (Binance forces IP-restriction the moment
+    // it's enabled), so falling back would just produce -2015 noise. When this
+    // is false, the Fly cron stays off and futures data arrives via the
+    // /futures/* ingestion endpoints from the droplet relay instead (the
+    // chosen architecture — the droplet reuses the bot's futures key + static
+    // IP). Set both vars only if you want Fly to poll Binance directly.
+    binanceFuturesKey: env.BINANCE_FUTURES_API_KEY,
+    binanceFuturesSecret: env.BINANCE_FUTURES_API_SECRET,
+    binanceFuturesEnabled: Boolean(
+      env.BINANCE_FUTURES_API_KEY && env.BINANCE_FUTURES_API_SECRET,
+    ),
     onchainEnabled: Boolean(env.ONCHAIN_WLD_WALLET),
     authEnabled: Boolean(env.API_AUTH_TOKEN),
   };

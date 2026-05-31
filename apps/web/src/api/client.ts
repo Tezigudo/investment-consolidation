@@ -6,7 +6,12 @@ import type {
   BotStatus,
   BotEventRow,
   BotEventKind,
+  FuturesAnalytics,
 } from '@consolidate/shared';
+
+// The /futures/analytics route augments FuturesAnalytics with a config flag so
+// the UI can tell "no futures key" apart from "key set but no data yet".
+export type FuturesAnalyticsResponse = FuturesAnalytics & { futuresConfigured: boolean };
 
 export interface DepositRow {
   id: number;
@@ -282,6 +287,9 @@ export const api = {
     if (opts.limit) qs.set('limit', String(opts.limit));
     return req<BotEventRow[]>(`/bot-events?${qs.toString()}`);
   },
+  // Binance Futures analytics (account ground-truth + bot attribution).
+  futuresAnalytics: (rangeDays = 30) =>
+    req<FuturesAnalyticsResponse>(`/futures/analytics?range=${rangeDays}`),
 };
 
 export interface AttributionRow {

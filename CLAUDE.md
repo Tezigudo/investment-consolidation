@@ -81,13 +81,29 @@ Dedup uses `UNIQUE(platform, external_id)`. When the CSV has no order ID, the im
 
 Pricing is served by `/api/v3/ticker/price` in a single batched call (array form with quoted symbols). Don't switch to per-symbol calls.
 
+## Futures analytics dashboard
+
+The desktop `Portfolio | Futures` switch (App.tsx) and the mobile `Futures` tab
+render `GET /futures/analytics?range=`. Two sources, shown side-by-side, never
+assumed equal: **account** = Binance ground truth (wallet/realized/funding/
+positions); **bot** = per-leg attribution from `bot_events` (works with no key).
+
+Account data arrives via the **droplet relay**, not from Fly: `snapback-btc/
+tools/consolidate_futures_push.py` reads the bot's real futures account (its own
+key + static IP, read-only GETs) and POSTs to `/futures/account-snapshot|
+positions|income` (bearer-authed; they write `futures_*` tables, migration 15).
+The read path (`services/futures-analytics.ts`) is DB-only. The Fly cron that
+polls fapi directly runs **only if** explicit `BINANCE_FUTURES_API_KEY`/`SECRET`
+are set (no spot-key fallback) — otherwise it's off and the droplet is the
+source. Pure analytics math is in `services/futures-math.ts` (unit-tested).
+
 ## Env loading
 
 `apps/api/src/config.ts` loads `.env` from the **repo root** (not `apps/api/.env`). Vite does the same via `envDir: root` in its config. Add API + web env vars to the root `.env`.
 
 ## Database
 
-Postgres runs via `docker-compose.yml` (service `db`, port 5432, db/user/password all `consolidate`). Connection string in `DATABASE_URL`. In production this points at Neon (Singapore region, free tier with auto-suspend). Migrations run on first import of `./db/client.js`; add new ones as appended entries in `apps/api/src/db/pg-migrations.ts` with a monotonically increasing `version` — never edit applied migrations in place. Current head is **migration 9** (`portfolio_snapshots`).
+Postgres runs via `docker-compose.yml` (service `db`, port 5432, db/user/password all `consolidate`). Connection string in `DATABASE_URL`. In production this points at Neon (Singapore region, free tier with auto-suspend). Migrations run via `runPgMigrations(pool)` on server boot; add new ones as appended entries in `apps/api/src/db/pg-migrations.ts` with a monotonically increasing `version` — never edit applied migrations in place. Current head is **migration 15** (`futures_analytics`).
 
 Tables carry intent: `deposits.fx_locked`, `trades.fx_at_trade`, and `positions.cost_basis_thb` are the FX-locked columns. If you add a new source of trades, make sure it writes an FX rate per row or the whole PNL model fails silently.
 
@@ -274,6 +290,7 @@ Active: [new session]
 Last: [first session]
 
 ## Session Continuity
-State: (no changes or facts recorded in this session segment)
+State: apps/web/src/views/mobile/Overview.tsx (edit)
+Files: apps/web/src/views/Dashboard.tsx, apps/web/src/lib/bots.ts, apps/web/src/views/mobile/Overview.tsx
 
 # === END COGNILAYER ===

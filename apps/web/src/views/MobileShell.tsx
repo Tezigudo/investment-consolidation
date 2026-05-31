@@ -4,12 +4,13 @@ import { Toast } from '../components/Toast';
 import { Overview } from './mobile/Overview';
 import { Holdings } from './mobile/Holdings';
 import { Activity } from './mobile/Activity';
+import { FuturesTab } from './mobile/FuturesTab';
 import { Settings } from './mobile/Settings';
 import { PositionSheet } from './mobile/PositionSheet';
 import { M } from './mobile/styles';
 import type { Currency, EnrichedPosition } from '@consolidate/shared';
 
-type Tab = 'overview' | 'holdings' | 'activity' | 'settings';
+type Tab = 'overview' | 'holdings' | 'activity' | 'futures' | 'settings';
 export type CostView = 'standard' | 'dime';
 
 interface Props {
@@ -45,6 +46,9 @@ export function MobileShell(props: Props) {
         />
       );
     }
+    // Futures has its OWN data source (useFuturesAnalytics), so hoist it above
+    // the portfolio error guard — a /portfolio failure shouldn't blank it.
+    if (tab === 'futures') return <FuturesTab privacy={privacy} />;
     if (isLoading || (!data && !error)) return <SkeletonScreen />;
     if (error || !data) return <ErrorScreen onSettings={() => setTab('settings')} />;
     switch (tab) {
@@ -145,6 +149,7 @@ const TAB_DEFS: Array<{ id: Tab; label: string; icon: string }> = [
   { id: 'overview', label: 'Overview', icon: 'overview' },
   { id: 'holdings', label: 'Holdings', icon: 'holdings' },
   { id: 'activity', label: 'Activity', icon: 'activity' },
+  { id: 'futures', label: 'Futures', icon: 'futures' },
   { id: 'settings', label: 'Settings', icon: 'settings' },
 ];
 
@@ -209,6 +214,17 @@ function TabIcon({ name, active }: { name: string; active: boolean }) {
           <path d="M3 12 H7 L10 5 L14 19 L17 12 H21" fill={fill} />
         </svg>
       );
+    case 'futures':
+      // Candlestick glyph — distinguishes the futures tab from the activity
+      // line-chart icon.
+      return (
+        <svg {...props}>
+          <rect x="6" y="7" width="3" height="8" rx="0.6" fill={fill} />
+          <path d="M7.5 4 V7 M7.5 15 V18" />
+          <rect x="15" y="10" width="3" height="7" rx="0.6" fill={fill} />
+          <path d="M16.5 6 V10 M16.5 17 V20" />
+        </svg>
+      );
     case 'settings':
       return (
         <svg {...props}>
@@ -228,7 +244,8 @@ const tabBarStyles = {
     right: 0,
     bottom: 0,
     display: 'grid',
-    gridTemplateColumns: 'repeat(4, 1fr)',
+    // One column per tab — keep in sync with TAB_DEFS length (now 5 incl. Futures).
+    gridTemplateColumns: `repeat(${TAB_DEFS.length}, 1fr)`,
     background: 'color-mix(in oklab, var(--bg) 95%, transparent)',
     backdropFilter: 'blur(14px)',
     borderTop: '1px solid var(--border)',

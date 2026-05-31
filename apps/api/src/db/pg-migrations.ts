@@ -385,6 +385,57 @@ export const PG_MIGRATIONS: Migration[] = [
       ));
     `,
   },
+  {
+    version: 15,
+    name: 'futures_analytics',
+    up: `
+      -- USDT-M Futures account analytics. Written by the futures cron in
+      -- jobs/scheduler.ts from fapi (fapi /v3/account, /v2/positionRisk,
+      -- /v1/income). The /futures/analytics read endpoint reads ONLY these
+      -- tables (hot-path discipline) — it never calls Binance.
+
+      -- Append-only equity history. One row per hourly snapshot (the cron
+      -- throttles inserts to ~1/hr, mirroring the heartbeat_snapshot pattern,
+      -- so this stays small on Neon's free tier).
+      CREATE TABLE IF NOT EXISTS futures_account_snapshot (
+        ts              BIGINT PRIMARY KEY,        -- ms since epoch
+        wallet_usd      DOUBLE PRECISION NOT NULL, -- totalWalletBalance
+        margin_usd      DOUBLE PRECISION NOT NULL, -- totalMarginBalance (wallet + uPnL)
+        unrealized_usd  DOUBLE PRECISION NOT NULL, -- totalUnrealizedProfit
+        available_usd   DOUBLE PRECISION NOT NULL  -- availableBalance
+      );
+
+      -- Current open positions. Upserted by symbol each cron tick; rows for
+      -- positions that have closed are deleted so the table mirrors live state.
+      CREATE TABLE IF NOT EXISTS futures_positions (
+        symbol          TEXT PRIMARY KEY,
+        position_side   TEXT NOT NULL,
+        position_amt    DOUBLE PRECISION NOT NULL, -- signed; < 0 short
+        entry_price     DOUBLE PRECISION NOT NULL,
+        mark_price      DOUBLE PRECISION NOT NULL,
+        unrealized_usd  DOUBLE PRECISION NOT NULL,
+        liq_price       DOUBLE PRECISION,          -- null when flat / not applicable
+        leverage        DOUBLE PRECISION NOT NULL,
+        updated_at      BIGINT NOT NULL            -- ms
+      );
+
+      -- Income ledger (realized PnL, funding, commission, transfers, …).
+      -- dedup_id = tranId:incomeType:time (tranId is unique per income type per
+      -- user; the composite also guards same-ms cross-symbol funding). income
+      -- is stored signed exactly as Binance returns it (funding < 0 = paid).
+      CREATE TABLE IF NOT EXISTS futures_income (
+        dedup_id     TEXT PRIMARY KEY,
+        tran_id      BIGINT NOT NULL,
+        symbol       TEXT NOT NULL DEFAULT '',
+        income_type  TEXT NOT NULL,
+        income_usd   DOUBLE PRECISION NOT NULL,
+        asset        TEXT NOT NULL,
+        ts           BIGINT NOT NULL              -- ms (event time)
+      );
+      CREATE INDEX IF NOT EXISTS idx_futures_income_ts ON futures_income(ts);
+      CREATE INDEX IF NOT EXISTS idx_futures_income_type ON futures_income(income_type);
+    `,
+  },
 ];
 
 export async function runPgMigrations(pool: Pool) {

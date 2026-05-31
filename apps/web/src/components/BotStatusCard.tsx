@@ -92,8 +92,13 @@ export function BotStatusCard({ source = 'snapback-btc' }: Props) {
   const { data, isLoading, error } = useQuery({
     queryKey: ['bot-status', source],
     queryFn: () => api.botStatus(source),
-    refetchInterval: 30_000,
-    staleTime: 25_000,
+    // 60s + pause-in-background: with 3 bot cards each hitting /bot-status (a
+    // DB-reading endpoint), 30s polling that never stopped when the tab was
+    // hidden kept Neon awake 24/7 and was a top compute drain. Liveness still
+    // reads fine at 60s (healthy ≤60s, stale ≤5min).
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+    staleTime: 55_000,
   });
 
   if (isLoading) {

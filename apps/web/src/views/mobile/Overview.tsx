@@ -1128,8 +1128,11 @@ function BotStatusMobile({ source = 'snapback-btc' }: { source?: string }) {
   const { data } = useQuery({
     queryKey: ['bot-status', source],
     queryFn: () => api.botStatus(source),
-    refetchInterval: 30_000,
-    staleTime: 25_000,
+    // 60s + pause-in-background to trim Neon compute (see BotStatusCard). The
+    // mobile PWA left open on a home screen would otherwise poll forever.
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+    staleTime: 55_000,
   });
 
   // Render the section header always — but compress the body in the

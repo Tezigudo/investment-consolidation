@@ -119,14 +119,16 @@ export function startJobs() {
     })();
   }
 
-  // Prices every 15 min (stocks + crypto). Batched with the binance + onchain
-  // crons below on the same minute marks (`:07, :22, :37, :52`) so the Neon
-  // compute wakes once per 15-min cycle and can auto-suspend between bursts
-  // instead of being pinned by 3 separate `*/5` jobs. Off the `:00` planet-
-  // wide spike per CronCreate guidance — pick non-round minutes.
-  // Stale price ceiling went from 5 → 15 min; dashboard tradeoff worth the
-  // compute-time savings.
-  const FAST_CRON = '7,22,37,52 * * * *';
+  // Prices every 30 min (stocks + crypto). Batched with the binance + onchain
+  // (+ futures) crons below on the same minute marks (`:07, :37`) so the Neon
+  // compute wakes ONCE per cycle and can auto-suspend between bursts instead of
+  // being pinned by separate jobs. Off the `:00` planet-wide spike per
+  // CronCreate guidance — pick non-round minutes.
+  // Cadence dropped 15 → 30 min (2026-05-31) to trim Neon free-tier compute:
+  // halves the 24/7 cron wakes. Tradeoff: prices/holdings up to ~30 min stale,
+  // fine for a passive monitoring dashboard. Pair with the lengthened web poll
+  // intervals (usePortfolio/BotStatusCard) so the compute can actually suspend.
+  const FAST_CRON = '7,37 * * * *';
 
   cron.schedule(FAST_CRON, async () => {
     try {

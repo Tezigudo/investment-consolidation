@@ -92,8 +92,13 @@ export function startJobs() {
   // Incremental Binance history sync on server start (if already seeded).
   if (config.binanceEnabled) {
     void (async () => {
-      if (!(await isBinanceSyncSeeded())) return;
       try {
+        // isBinanceSyncSeeded() must be INSIDE the try: it queries the DB, so
+        // when the DB is down (e.g. Neon quota) it throws — and an uncaught
+        // throw here is an unhandled rejection that CRASHES the whole process
+        // (this crash-looped prod during the May 2026 Neon outage). Keep every
+        // DB-touching boot await guarded so a down DB only degrades, never kills.
+        if (!(await isBinanceSyncSeeded())) return;
         console.log('[jobs] binance history: incremental sync on startup…');
         const r = await importBinanceHistory();
         console.log(

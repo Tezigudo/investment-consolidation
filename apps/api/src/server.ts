@@ -16,6 +16,15 @@ import { startJobs } from './jobs/scheduler.js';
 
 const app = Fastify({ logger: { level: config.NODE_ENV === 'production' ? 'info' : 'debug' } });
 
+// Safety net: a background job (cron, boot warm-up, migration retry) that
+// throws must NOT crash the whole API. During the May 2026 Neon outage an
+// uncaught DB error in startJobs() exited the process (code 1) → crash-loop →
+// every deploy failed its health check. Log and stay alive instead; request
+// handlers still surface their own errors via setErrorHandler below.
+process.on('unhandledRejection', (reason) => {
+  app.log.error({ err: reason }, 'unhandledRejection — kept alive');
+});
+
 // CORS: allow configured origins for the web app. Wildcards via the env
 // var are allowed (e.g. `https://*.pages.dev`) — match handled per-request.
 // Requests with no Origin header (curl, server-to-server) bypass entirely.

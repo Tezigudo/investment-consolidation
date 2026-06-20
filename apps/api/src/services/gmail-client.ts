@@ -48,32 +48,58 @@ interface InstalledCredentials {
 
 function loadCredentials(): InstalledCredentials['installed'] {
   const p = credentialsPath();
-  if (!fs.existsSync(p)) {
-    throw new Error(
-      `Gmail credentials not found at ${p}. Set GMAIL_CREDENTIALS_PATH or place the OAuth "installed" client JSON at secrets/gmail-credentials.json.`,
-    );
+  if (fs.existsSync(p)) {
+    const raw = JSON.parse(fs.readFileSync(p, 'utf8')) as InstalledCredentials;
+    if (!raw.installed) {
+      throw new Error(`Expected "installed" OAuth client credentials at ${p}`);
+    }
+    return raw.installed;
   }
-  const raw = JSON.parse(fs.readFileSync(p, 'utf8')) as InstalledCredentials;
-  if (!raw.installed) {
-    throw new Error(`Expected "installed" OAuth client credentials at ${p}`);
+  // Fallback: parse credentials from GMAIL_CREDENTIALS_JSON env var (prod/Fly).
+  if (config.GMAIL_CREDENTIALS_JSON) {
+    const raw = JSON.parse(config.GMAIL_CREDENTIALS_JSON) as InstalledCredentials;
+    if (!raw.installed) {
+      throw new Error('GMAIL_CREDENTIALS_JSON is set but missing the "installed" key');
+    }
+    return raw.installed;
   }
-  return raw.installed;
+  throw new Error(
+    `Gmail credentials not found at ${p} and GMAIL_CREDENTIALS_JSON is not set. ` +
+      'Set GMAIL_CREDENTIALS_PATH or GMAIL_CREDENTIALS_JSON, or place the OAuth "installed" client JSON at secrets/gmail-credentials.json.',
+  );
 }
 
 function loadCachedToken(): Record<string, unknown> | null {
   const p = tokenPath();
-  if (!fs.existsSync(p)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(p, 'utf8')) as Record<string, unknown>;
-  } catch {
-    return null;
+  if (fs.existsSync(p)) {
+    try {
+      return JSON.parse(fs.readFileSync(p, 'utf8')) as Record<string, unknown>;
+    } catch {
+      // fall through to env fallback
+    }
   }
+  // Fallback: parse token from GMAIL_TOKEN_JSON env var (prod/Fly).
+  if (config.GMAIL_TOKEN_JSON) {
+    try {
+      return JSON.parse(config.GMAIL_TOKEN_JSON) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 function saveToken(token: Record<string, unknown>): void {
   const p = tokenPath();
-  fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, JSON.stringify(token, null, 2), { mode: 0o600 });
+  try {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, JSON.stringify(token, null, 2), { mode: 0o600 });
+  } catch (err) {
+    // In prod (Fly) the filesystem may be read-only or ephemeral.
+    // The in-memory OAuth2Client still works for this process lifetime
+    // via the refresh_token — just warn instead of crashing.
+    console.warn(`[gmail] failed to persist token to ${p}: ${(err as Error).message}`);
+  }
 }
 
 async function runInteractiveAuth(creds: InstalledCredentials['installed']): Promise<OAuth2Client> {

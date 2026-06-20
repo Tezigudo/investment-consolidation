@@ -39,6 +39,8 @@ const EnvSchema = z.object({
   DIME_PDF_PASSWORD: z.string().optional(),
   GMAIL_CREDENTIALS_PATH: z.string().optional(),
   GMAIL_TOKEN_PATH: z.string().optional(),
+  GMAIL_CREDENTIALS_JSON: z.string().optional(),
+  GMAIL_TOKEN_JSON: z.string().optional(),
 
   // Postgres connection string. Defaults to the docker-compose service
   // (consolidate/consolidate@127.0.0.1:5432/consolidate). Override per env.

@@ -10,6 +10,8 @@ import { refreshOnChainWLD } from '../services/onchain.js';
 import { warmDailyHistoryBatch } from '../services/price-history.js';
 import { captureSnapshotNow, snapshotCount, backfillSnapshots } from '../services/portfolio-history.js';
 import { refreshFuturesLive, syncFuturesIncome } from '../services/futures-analytics.js';
+import { importDimeMail } from '../services/dime-mail.js';
+import { isGmailConfigured, isGmailAuthed } from '../services/gmail-client.js';
 
 // Symbols held on-chain that need a USDT price even though we never
 // trade them through Binance. Keeps the crypto price refresh aware of
@@ -269,6 +271,31 @@ export function startJobs() {
       );
     } catch (e) {
       console.warn('[jobs] binance history failed:', (e as Error).message);
+    }
+  });
+
+  // DIME mail (Gmail) — parse broker statement emails every 6 hours.
+  // Dime sends a few times/week; 6h gives prompt freshness without
+  // spamming Gmail. Gated on Gmail credentials + cached OAuth token so
+  // the cron no-ops cleanly when auth is missing or expired.
+  cron.schedule('0 */6 * * *', async () => {
+    if (!isGmailConfigured()) {
+      console.log('[jobs] dime mail: Gmail credentials not configured — skipping');
+      return;
+    }
+    if (!isGmailAuthed()) {
+      console.log(
+        '[jobs] dime mail: Gmail not authorized — run `bun run import:dime-mail -- --auth` first',
+      );
+      return;
+    }
+    try {
+      const r = await importDimeMail({ interactive: false });
+      console.log(
+        `[jobs] dime mail synced: +${r.counts.trades} trades, +${r.counts.deposits} deposits`,
+      );
+    } catch (e) {
+      console.warn('[jobs] dime mail failed:', (e as Error).message);
     }
   });
 }

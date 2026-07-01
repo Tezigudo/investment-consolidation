@@ -113,7 +113,8 @@ export type BotEventKind =
   | 'halt'                 // HALT file detected; bot exiting
   | 'boot_flatten'         // bot found open position at boot, flattened it
   | 'order_failed'         // exchange rejected an order; has error msg in payload
-  | 'signal_skipped';      // signal fired but skipped (e.g. below exchange minimums)
+  | 'signal_skipped'       // signal fired but skipped (e.g. below exchange minimums)
+  | 'daily_loss_breaker';  // intraday drawdown hit MAX_DAILY_LOSS_PCT; new entries blocked until next UTC day
 
 export interface BotEventPayload {
   source: string;                // e.g. 'snapback-btc' — distinguishes if multiple bots ever exist

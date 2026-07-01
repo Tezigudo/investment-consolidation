@@ -33,6 +33,7 @@ const POST_KIND = z.enum([
   'boot_flatten',
   'order_failed',
   'signal_skipped',
+  'daily_loss_breaker',
 ]);
 
 // Kinds queryable from the GET /bot-events filter — includes the internal

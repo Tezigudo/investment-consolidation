@@ -7,26 +7,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { z } from 'zod';
 import { PG_MIGRATIONS } from '../db/pg-migrations.js';
-
-// ---------------------------------------------------------------------------
-// Replicate POST_KIND here so we can test it as a standalone unit.
-// If bot-events.ts ever exports it, swap this to an import.
-// ---------------------------------------------------------------------------
-const POST_KIND = z.enum([
-  'boot',
-  'heartbeat',
-  'dry_run_signal',
-  'entry',
-  'exit',
-  'kill_switch',
-  'halt',
-  'boot_flatten',
-  'order_failed',
-  'signal_skipped',
-  'daily_loss_breaker',
-]);
+import { POST_KIND } from './bot-events.js';
 
 // ---------------------------------------------------------------------------
 // POST_KIND validator

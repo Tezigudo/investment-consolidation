@@ -277,13 +277,23 @@ export async function botStatus(source: string): Promise<BotStatus> {
     typeof bootPayload.deploy_start_equity === 'number'
       ? (bootPayload.deploy_start_equity as number)
       : null;
+  // The kill switch is anchored on NET DEPOSITED PRINCIPAL (the bot sends
+  // `principal_anchor` in the boot payload). Prefer it; fall back to
+  // deploy_start_equity for older boot events that predate the principal
+  // anchor. This matters most for legs whose principal diverges from their
+  // first-deploy equity (e.g. a leg funded up after deploy).
+  const principalAnchorUsd =
+    typeof bootPayload.principal_anchor === 'number'
+      ? (bootPayload.principal_anchor as number)
+      : null;
+  const killSwitchAnchorUsd = principalAnchorUsd ?? deployStartEquityUsd;
   const killSwitchFraction =
     typeof bootPayload.kill_switch_fraction === 'number'
       ? (bootPayload.kill_switch_fraction as number)
       : null;
   const killSwitchLevelUsd =
-    deployStartEquityUsd != null && killSwitchFraction != null
-      ? deployStartEquityUsd * killSwitchFraction
+    killSwitchAnchorUsd != null && killSwitchFraction != null
+      ? killSwitchAnchorUsd * killSwitchFraction
       : null;
   const currentEquityUsd = hb?.equityUsd ?? eq?.equity_usd ?? null;
   const killSwitchHeadroomPct =

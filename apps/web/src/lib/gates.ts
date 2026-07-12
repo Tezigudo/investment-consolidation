@@ -10,7 +10,7 @@
 // still shows something useful even before this map is updated.
 
 export const GATE_LABELS: Record<string, string> = {
-  rsi_oversold: 'RSI oversold (<40)',
+  rsi_oversold: 'RSI oversold (<35)', // snapback params.yaml rsi_long_threshold=35 since 2026-05-29
   rsi_overbought: 'RSI overbought (>70)',
   trend_up: 'Close > EMA(200)',
   trend_down: 'Close < EMA(200)',

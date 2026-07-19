@@ -311,6 +311,69 @@ export function buildDimeCashRow(
   };
 }
 
+// Synthesize the snapback trading bots' futures equity as a single cash-like
+// row so the bots' money is counted in the consolidated total. `margin_usd`
+// (= wallet + unrealized PnL) is the true mark-to-market equity; we model it
+// as USD cash at 1:1 (cost == market, PNL 0) exactly like the DIME/Binance
+// cash rows — the equity number itself already embeds realized+unrealized, so
+// we don't double-count via realized totals or a phantom FX gain. `asOf`
+// carries the snapshot ts so the UI can show "as of Xh ago" if it wants.
+// Returns null when there's no (or a non-positive/NaN) snapshot, which keeps
+// the futures bucket empty and `totals.all` identical to the pre-futures value.
+export function buildFuturesEquityRow(
+  snap: { margin_usd: number; ts: number } | null,
+  marketFX: number,
+): EnrichedPosition | null {
+  if (!snap) return null;
+  const usd = Number(snap.margin_usd);
+  if (!Number.isFinite(usd) || usd <= 0.005) return null;
+  const marketTHB = usd * marketFX;
+  return {
+    platform: 'Futures',
+    symbol: 'USDT',
+    name: 'Bot equity',
+    sector: 'Cash',
+    qty: usd,
+    avgUSD: 1,
+    priceUSD: 1,
+    fxLocked: marketFX,
+    marketUSD: usd,
+    costUSD: usd,
+    pnlUSD: 0,
+    pnlPct: 0,
+    marketTHB,
+    costTHB: marketTHB,
+    pnlTHB: 0,
+    pnlPctTHB: 0,
+    fxContribTHB: 0,
+    realizedUSD: 0,
+    realizedTHB: 0,
+    fifoCostUSD: usd,
+    fifoCostTHB: marketTHB,
+    asOf: Number.isFinite(Number(snap.ts)) ? Number(snap.ts) : null,
+  };
+}
+
+// Read the latest futures_account_snapshot and synthesize the equity row.
+// DB-only (cheap) so safe on the hot path. Any read failure (incl. a missing
+// table) degrades to an empty bucket rather than erroring the whole snapshot —
+// futures equity is additive, never load-bearing for the rest of the response.
+async function readFuturesPositions(marketFX: number): Promise<EnrichedPosition[]> {
+  try {
+    const { rows } = await pool.query<{ ts: string; margin_usd: number }>(
+      'SELECT ts::text, margin_usd FROM futures_account_snapshot ORDER BY ts DESC LIMIT 1',
+    );
+    const snap = rows[0]
+      ? { ts: Number(rows[0].ts), margin_usd: Number(rows[0].margin_usd) }
+      : null;
+    const row = buildFuturesEquityRow(snap, marketFX);
+    return row ? [row] : [];
+  } catch (e) {
+    console.warn('[portfolio] futures snapshot read failed:', (e as Error).message);
+    return [];
+  }
+}
+
 // Recompute DIME positions from trades. Cheap (DB-only) so safe on hot path.
 async function readDimePositions(
   marketFX: number,
@@ -504,6 +567,7 @@ export async function buildSnapshot(opts: { refresh?: boolean } = {}): Promise<P
   const binance = await readBinancePositionsFromDb(fx.rate, binanceTrades);
   const bank = await buildBankPositions();
   const onchain = await readOnChainPositionsFromDb(fx.rate);
+  const futures = await readFuturesPositions(fx.rate);
 
   const dimeRealized = realizedAcrossSymbols(dimeRes.tradeMap);
   const binanceRealized = realizedAcrossSymbols(binanceTrades);
@@ -514,14 +578,15 @@ export async function buildSnapshot(opts: { refresh?: boolean } = {}): Promise<P
     binance: sumTotals(binance, binanceRealized),
     bank: sumTotals(bank),
     onchain: sumTotals(onchain),
-    all: sumTotals([...dime, ...binance, ...bank, ...onchain], allRealized),
+    futures: sumTotals(futures),
+    all: sumTotals([...dime, ...binance, ...bank, ...onchain, ...futures], allRealized),
   };
 
   const realizedBySymbol = buildRealizedBySymbol(dimeRes.tradeMap, binanceTrades);
 
   return {
     fx: { usdthb: fx.rate, ts: fx.ts },
-    positions: { dime, binance, bank, onchain },
+    positions: { dime, binance, bank, onchain, futures },
     totals,
     realizedBySymbol,
     asOf: Date.now(),

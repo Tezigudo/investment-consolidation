@@ -254,6 +254,7 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
                 { key: 'dime', name: 'DIME', sub: 'US stocks', color: 'var(--accent)', tot: snap.totals.dime },
                 { key: 'binance', name: 'Binance', sub: 'Crypto', color: 'var(--accent-2)', tot: snap.totals.binance },
                 { key: 'onchain', name: 'On-chain', sub: 'World Chain', color: 'oklch(0.78 0.15 145)', tot: snap.totals.onchain },
+                { key: 'futures', name: 'Futures', sub: 'Bot equity', color: 'oklch(0.72 0.16 55)', tot: snap.totals.futures },
                 { key: 'bank', name: 'Bank', sub: 'THB cash', color: 'var(--muted-2)', tot: snap.totals.bank },
               ].filter((p) => p.tot.marketUSD > 0).map((p) => {
                 const v = currency === 'THB' ? p.tot.marketTHB : p.tot.marketUSD;

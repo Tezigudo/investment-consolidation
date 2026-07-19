@@ -228,6 +228,7 @@ export function Overview({ data, currency, setCurrency, privacy, setPrivacy }: P
             { key: 'dime', name: 'DIME', sub: 'US stocks', color: 'var(--accent)', tot: data.totals.dime },
             { key: 'binance', name: 'Binance', sub: 'Crypto', color: 'var(--accent-2)', tot: data.totals.binance },
             { key: 'onchain', name: 'On-chain', sub: 'World Chain', color: 'oklch(0.78 0.15 145)', tot: data.totals.onchain },
+            { key: 'futures', name: 'Futures', sub: 'Bot equity', color: 'oklch(0.72 0.16 55)', tot: data.totals.futures },
             { key: 'bank', name: 'Bank', sub: 'THB cash', color: 'var(--muted-2)', tot: data.totals.bank },
           ]
             .filter((p) => p.tot.marketUSD > 0)

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildDimeCashRow } from './portfolio.js';
+import { buildDimeCashRow, buildFuturesEquityRow } from './portfolio.js';
 import type { TradeRow } from '../db/types.js';
 
 function trade(partial: Partial<TradeRow>): TradeRow {
@@ -76,5 +76,55 @@ describe('buildDimeCashRow — withdrawals', () => {
     // 500 − 499.999 = 0.001 ≤ 0.005 → treated as no idle USD.
     const row = buildDimeCashRow(netFiveHundred(), FX, 499.999);
     expect(row).toBeNull();
+  });
+});
+
+describe('buildFuturesEquityRow — bot equity bucket', () => {
+  const TS = 1_750_000_000_000;
+
+  it('snapshot present → cash-like row equal to margin_usd (equity, PNL 0)', () => {
+    const row = buildFuturesEquityRow({ margin_usd: 137.59, ts: TS }, FX);
+    expect(row).not.toBeNull();
+    expect(row!.platform).toBe('Futures');
+    expect(row!.symbol).toBe('USDT');
+    expect(row!.sector).toBe('Cash');
+    // Bucket value == margin_usd, in both currencies.
+    expect(row!.qty).toBeCloseTo(137.59, 6);
+    expect(row!.marketUSD).toBeCloseTo(137.59, 6);
+    expect(row!.marketTHB).toBeCloseTo(137.59 * FX, 6);
+    // Cash-like: cost == market so it never drags PNL.
+    expect(row!.costUSD).toBeCloseTo(137.59, 6);
+    expect(row!.pnlUSD).toBe(0);
+    expect(row!.pnlTHB).toBe(0);
+    expect(row!.fxContribTHB).toBe(0);
+    expect(row!.realizedUSD).toBe(0);
+    // Snapshot ts is carried so the UI could show "as of Xh ago".
+    expect(row!.asOf).toBe(TS);
+  });
+
+  it('no snapshot (null) → null (empty bucket, strict superset of live)', () => {
+    expect(buildFuturesEquityRow(null, FX)).toBeNull();
+  });
+
+  it('zero / dust equity → null (no phantom row)', () => {
+    expect(buildFuturesEquityRow({ margin_usd: 0, ts: TS }, FX)).toBeNull();
+    expect(buildFuturesEquityRow({ margin_usd: 0.004, ts: TS }, FX)).toBeNull();
+  });
+
+  it('negative or NaN equity → null (never a negative/garbage bucket)', () => {
+    expect(buildFuturesEquityRow({ margin_usd: -5, ts: TS }, FX)).toBeNull();
+    expect(buildFuturesEquityRow({ margin_usd: NaN, ts: TS }, FX)).toBeNull();
+  });
+
+  it('the row is additive into `all` — its marketUSD is exactly the bucket that gets spread into the all-total', () => {
+    // buildSnapshot does `all: sumTotals([...dime, ...binance, ...bank, ...onchain, ...futures])`.
+    // sumTotals just adds each row's marketUSD, so a present futures row raises
+    // `all.marketUSD` by exactly margin_usd, and an absent one (null → []) leaves it unchanged.
+    const present = buildFuturesEquityRow({ margin_usd: 137.59, ts: TS }, FX);
+    const absent = buildFuturesEquityRow(null, FX);
+    const presentContribution = present ? present.marketUSD : 0;
+    const absentContribution = absent ? absent.marketUSD : 0;
+    expect(presentContribution).toBeCloseTo(137.59, 6);
+    expect(absentContribution).toBe(0);
   });
 });

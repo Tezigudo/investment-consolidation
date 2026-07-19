@@ -1,4 +1,4 @@
-export type Platform = 'DIME' | 'Binance' | 'Bank' | 'OnChain';
+export type Platform = 'DIME' | 'Binance' | 'Bank' | 'OnChain' | 'Futures';
 export type TradeSide = 'BUY' | 'SELL' | 'DIV';
 
 export interface TradeRow {
@@ -40,6 +40,12 @@ export interface EnrichedPosition {
   // (=costUSD) when there's no SELL history to disambiguate.
   fifoCostUSD: number;
   fifoCostTHB: number;
+  // Optional as-of timestamp (ms since epoch) for synthesized rows sourced
+  // from a periodic snapshot rather than live trade data — e.g. the Futures
+  // "Bot equity" row, whose value is the latest hourly futures_account_snapshot.
+  // Lets the UI render "as of Xh ago" without a staleness cutoff. Undefined
+  // for all trade-derived rows.
+  asOf?: number | null;
 }
 
 export interface Totals {
@@ -62,12 +68,19 @@ export interface PortfolioSnapshot {
     binance: EnrichedPosition[];
     bank: EnrichedPosition[];
     onchain: EnrichedPosition[];
+    // Snapback trading bots' futures equity, synthesized as a single cash-like
+    // "Bot equity" row from the latest futures_account_snapshot (margin_usd).
+    // Empty when no snapshot exists.
+    futures: EnrichedPosition[];
   };
   totals: {
     dime: Totals;
     binance: Totals;
     bank: Totals;
     onchain: Totals;
+    // Futures bot equity bucket. Zeroed when no snapshot exists, so `all`
+    // stays identical to the pre-futures total in that state.
+    futures: Totals;
     all: Totals;
   };
   // Lifetime realized PNL keyed by ticker, summed across DIME + Binance.

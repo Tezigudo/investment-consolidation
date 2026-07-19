@@ -260,12 +260,21 @@ export async function refreshBinance(marketFX: number): Promise<EnrichedPosition
 // account). DIME holds THB by default and converts on each BUY, so
 // deposits do NOT translate into a USD balance — modelling them that way
 // over-counted by ~$1.3k against the DIME app. Net residue is computed
-// purely from trades: `usd = sum(SELL.usd) − sum(BUY.usd)`. If positive,
-// emit a cash row with cost = today's FX (we don't track when each
-// proceeds-USD was held, so no FX gain is implied).
-function buildDimeCashRow(
+// purely from trades: `usd = sum(SELL.usd) − sum(BUY.usd)`.
+//
+// Trades alone still over-count when the user pulls proceeds back OUT of
+// DIME (money that left the investment world — e.g. to pay a bill). The
+// model has no withdrawal concept from trades, so we subtract a separate
+// withdrawals ledger (dime_usd_withdrawals, see migration 17):
+//   `usd = sum(SELL.usd) − sum(BUY.usd) − withdrawnUSD`.
+// A fully-withdrawn wallet nets to ~0 and emits NO cash row. When
+// withdrawnUSD = 0 the result is identical to the trades-only formula.
+// If positive, emit a cash row with cost = today's FX (we don't track
+// when each proceeds-USD was held, so no FX gain is implied).
+export function buildDimeCashRow(
   tradeMap: Map<string, TradeRow[]>,
   marketFX: number,
+  withdrawnUSD = 0,
 ): EnrichedPosition | null {
   let usd = 0;
   for (const trades of tradeMap.values()) {
@@ -274,7 +283,8 @@ function buildDimeCashRow(
       else if (t.side === 'SELL') usd += t.qty * t.price_usd;
     }
   }
-  if (usd <= 0.005) return null; // no idle USD — buys absorbed all sell proceeds
+  usd -= withdrawnUSD; // proceeds pulled out of DIME are no longer idle cash
+  if (usd <= 0.005) return null; // no idle USD — buys/withdrawals absorbed all sell proceeds
   const marketTHB = usd * marketFX;
   return {
     platform: 'DIME',
@@ -339,7 +349,13 @@ async function readDimePositions(
     await upsertPosition(enriched);
     out.push(enriched);
   }
-  const cash = buildDimeCashRow(tradeMap, marketFX);
+  // USD pulled out of the DIME wallet entirely (see migration 17). Subtracted
+  // from the trades-only residue so withdrawn proceeds stop showing as idle cash.
+  const { rows: wRows } = await pool.query<{ total: string }>(
+    'SELECT COALESCE(SUM(amount_usd), 0) AS total FROM dime_usd_withdrawals',
+  );
+  const withdrawnUSD = Number(wRows[0]?.total ?? 0);
+  const cash = buildDimeCashRow(tradeMap, marketFX, withdrawnUSD);
   if (cash) out.push(cash);
   return { positions: out, tradeMap };
 }

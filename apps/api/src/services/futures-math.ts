@@ -21,10 +21,12 @@ export interface IncomeRow {
   incomeType: string; // REALIZED_PNL | FUNDING_FEE | COMMISSION | ...
   incomeUsd: number;  // signed exactly as Binance returns (funding < 0 = paid)
   ts: number;         // ms
+  symbol?: string;    // the contract, e.g. BTCUSDT (empty for wallet transfers)
 }
 
 export interface IncomeSummary {
   realizedPnlUsd: number;
+  realizedBySymbol: Record<string, number>; // realized PnL split per symbol
   fundingPaidUsd: number;      // positive magnitude of funding paid
   fundingReceivedUsd: number;  // positive magnitude of funding received
   fundingNetUsd: number;       // received − paid (signed)
@@ -44,6 +46,7 @@ export interface IncomeSummary {
  */
 export function summarizeIncome(rows: IncomeRow[]): IncomeSummary {
   let realizedPnlUsd = 0;
+  const realizedBySymbol: Record<string, number> = {};
   let fundingPaidUsd = 0;
   let fundingReceivedUsd = 0;
   let commissionUsd = 0; // accumulate paid as positive
@@ -62,11 +65,14 @@ export function summarizeIncome(rows: IncomeRow[]): IncomeSummary {
     const day = utcDay(r.ts);
     const b = bucket(day);
     switch (r.incomeType) {
-      case 'REALIZED_PNL':
+      case 'REALIZED_PNL': {
         realizedPnlUsd += r.incomeUsd;
+        const sym = r.symbol || 'UNKNOWN';
+        realizedBySymbol[sym] = (realizedBySymbol[sym] ?? 0) + r.incomeUsd;
         b.realizedPnlUsd += r.incomeUsd;
         b.netUsd += r.incomeUsd;
         break;
+      }
       case 'FUNDING_FEE':
         if (r.incomeUsd < 0) fundingPaidUsd += -r.incomeUsd;
         else fundingReceivedUsd += r.incomeUsd;
@@ -97,8 +103,11 @@ export function summarizeIncome(rows: IncomeRow[]): IncomeSummary {
     .sort((a, b) => a.day.localeCompare(b.day));
 
   const fundingNetUsd = fundingReceivedUsd - fundingPaidUsd;
+  const realizedBySymbolRounded: Record<string, number> = {};
+  for (const [sym, v] of Object.entries(realizedBySymbol)) realizedBySymbolRounded[sym] = round2(v);
   return {
     realizedPnlUsd: round2(realizedPnlUsd),
+    realizedBySymbol: realizedBySymbolRounded,
     fundingPaidUsd: round2(fundingPaidUsd),
     fundingReceivedUsd: round2(fundingReceivedUsd),
     fundingNetUsd: round2(fundingNetUsd),

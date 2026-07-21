@@ -268,11 +268,52 @@ export interface FuturesAccountSummary {
   availableBalanceUsd: number | null;
   // Aggregated over the loaded income window:
   realizedPnlUsd: number;
+  realizedBySymbol: Record<string, number>; // realized PnL per symbol (bot=BTC vs manual alts)
   fundingPaidUsd: number;      // sum of funding PAID, reported as a positive number
   fundingReceivedUsd: number;  // sum of funding RECEIVED, positive
   fundingNetUsd: number;       // received − paid (signed)
   commissionUsd: number;       // total commission paid, positive number
   netIncomeUsd: number;        // realized + fundingNet − commission
+}
+
+/** The symbol(s) the trading bot trades. Realized PnL on these is "bot"; any
+ * other symbol on the account is manual/discretionary. The relay reads ONE
+ * account and both bot legs are BTC-only, so non-bot symbols on that account
+ * are hand trades. Keep in sync with the bot's traded symbol. */
+export const BOT_SYMBOLS = ['BTCUSDT'] as const;
+
+export interface RealizedSplit {
+  botUsd: number;           // realized on bot symbols (BTC)
+  manualUsd: number;        // realized on every other symbol
+  manualSymbols: string[];  // sorted non-bot symbols that had realized PnL
+  hasManual: boolean;       // true when any non-bot symbol had realized activity
+}
+
+/** Split a per-symbol realized map into bot (BTC) vs manual (everything else),
+ * so the dashboard can show WHY a red Realized figure isn't the bot losing. */
+export function splitRealizedBySymbol(
+  realizedBySymbol: Record<string, number>,
+  botSymbols: readonly string[] = BOT_SYMBOLS,
+): RealizedSplit {
+  const bot = new Set<string>(botSymbols);
+  let botUsd = 0;
+  let manualUsd = 0;
+  const manualSymbols: string[] = [];
+  for (const [sym, usd] of Object.entries(realizedBySymbol)) {
+    if (bot.has(sym)) {
+      botUsd += usd;
+    } else {
+      manualUsd += usd;
+      if (usd !== 0) manualSymbols.push(sym);
+    }
+  }
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  return {
+    botUsd: r2(botUsd),
+    manualUsd: r2(manualUsd),
+    manualSymbols: manualSymbols.sort(),
+    hasManual: manualSymbols.length > 0,
+  };
 }
 
 // The pending exit of an OPEN bot trade: where it stops, and when the

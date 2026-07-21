@@ -23,6 +23,7 @@ import type {
   FuturesBotTrade,
   FuturesExitPlan,
 } from '@consolidate/shared';
+import { splitRealizedBySymbol } from '@consolidate/shared';
 
 const RANGES = [
   { label: '7D', days: 7 },
@@ -126,7 +127,13 @@ export function Futures({ privacy }: Props) {
                 sub={usdthb && data.account.walletBalanceUsd != null && !privacy ? `≈ ฿${(data.account.walletBalanceUsd * usdthb).toLocaleString('en-US', { maximumFractionDigits: 0 })}` : ''} />
               <Stat label="Margin balance" value={usd(data.account.marginBalanceUsd, privacy)} sub="wallet + uPnL" />
               <Stat label="Unrealized PnL" value={usd(data.account.unrealizedPnlUsd, privacy)} color={signColor(data.account.unrealizedPnlUsd)} />
-              <Stat label={`Realized PnL (${days}d)`} value={usd(data.account.realizedPnlUsd, privacy)} color={signColor(data.account.realizedPnlUsd)} />
+              {(() => {
+                const s = splitRealizedBySymbol(data.account.realizedBySymbol);
+                return (
+                  <Stat label={`Realized PnL (${days}d)`} value={usd(data.account.realizedPnlUsd, privacy)} color={signColor(data.account.realizedPnlUsd)}
+                    sub={!privacy && s.hasManual ? `BTC bot ${usd(s.botUsd)} · manual ${usd(s.manualUsd)}` : ''} />
+                );
+              })()}
               <Stat label={`Funding net (${days}d)`} value={usd(data.account.fundingNetUsd, privacy)} color={signColor(data.account.fundingNetUsd)}
                 sub={privacy ? '' : `paid ${usd(-data.account.fundingPaidUsd)} · recv ${usd(data.account.fundingReceivedUsd)}`} />
               <Stat label={`Commission (${days}d)`} value={usd(-data.account.commissionUsd, privacy)} color={data.account.commissionUsd > 0 ? DOWN : 'var(--text)'} />

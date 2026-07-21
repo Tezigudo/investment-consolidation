@@ -242,8 +242,8 @@ export async function buildFuturesAnalytics(rangeDays: number): Promise<FuturesA
       'SELECT ts::text, wallet_usd, margin_usd FROM futures_account_snapshot WHERE ts >= $1 ORDER BY ts ASC',
       [since],
     ),
-    pool.query<{ income_type: string; income_usd: number; ts: string }>(
-      'SELECT income_type, income_usd, ts::text FROM futures_income WHERE ts >= $1 ORDER BY ts ASC',
+    pool.query<{ income_type: string; income_usd: number; ts: string; symbol: string | null }>(
+      'SELECT income_type, income_usd, ts::text, symbol FROM futures_income WHERE ts >= $1 ORDER BY ts ASC',
       [since],
     ),
     pool.query<{ symbol: string; position_side: string; position_amt: number; entry_price: number; mark_price: number; unrealized_usd: number; liq_price: number | null; leverage: number; updated_at: string; sl_price: number | null; tp_price: number | null }>(
@@ -255,6 +255,7 @@ export async function buildFuturesAnalytics(rangeDays: number): Promise<FuturesA
     incomeType: r.income_type,
     incomeUsd: Number(r.income_usd),
     ts: Number(r.ts),
+    symbol: r.symbol ?? undefined,
   }));
   const inc = summarizeIncome(incomeLite);
 
@@ -267,6 +268,7 @@ export async function buildFuturesAnalytics(rangeDays: number): Promise<FuturesA
     unrealizedPnlUsd: snap ? Number(snap.unrealized_usd) : null,
     availableBalanceUsd: snap ? Number(snap.available_usd) : null,
     realizedPnlUsd: inc.realizedPnlUsd,
+    realizedBySymbol: inc.realizedBySymbol,
     fundingPaidUsd: inc.fundingPaidUsd,
     fundingReceivedUsd: inc.fundingReceivedUsd,
     fundingNetUsd: inc.fundingNetUsd,

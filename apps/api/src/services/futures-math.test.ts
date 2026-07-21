@@ -8,6 +8,7 @@ import {
   type IncomeRow,
   type BotEventLite,
 } from './futures-math.js';
+import { splitRealizedBySymbol } from '@consolidate/shared';
 
 const DAY = 24 * 60 * 60 * 1000;
 const T0 = Date.UTC(2026, 0, 1, 12, 0, 0); // 2026-01-01T12:00Z
@@ -71,6 +72,44 @@ describe('summarizeIncome', () => {
       realizedPnlUsd: 0, fundingNetUsd: 0, commissionUsd: 0, netIncomeUsd: 0,
     });
     expect(s.byDay).toEqual([]);
+    expect(s.realizedBySymbol).toEqual({});
+  });
+
+  it('accumulates realized PnL per symbol (only REALIZED_PNL rows)', () => {
+    const rows: IncomeRow[] = [
+      { incomeType: 'REALIZED_PNL', incomeUsd: 5.46, ts: T0, symbol: 'BTCUSDT' },
+      { incomeType: 'REALIZED_PNL', incomeUsd: -4.96, ts: T0 + DAY, symbol: 'BTCUSDT' },
+      { incomeType: 'REALIZED_PNL', incomeUsd: -7.03, ts: T0, symbol: 'VELVETUSDT' },
+      { incomeType: 'COMMISSION', incomeUsd: -0.5, ts: T0, symbol: 'BTCUSDT' }, // not realized
+      { incomeType: 'TRANSFER', incomeUsd: 40, ts: T0, symbol: '' },            // not realized
+    ];
+    const s = summarizeIncome(rows);
+    expect(s.realizedBySymbol).toEqual({ BTCUSDT: 0.5, VELVETUSDT: -7.03 });
+    expect(s.realizedPnlUsd).toBe(-6.53); // 5.46 − 4.96 − 7.03
+  });
+});
+
+describe('splitRealizedBySymbol', () => {
+  it('splits BTC (bot) from every other symbol (manual)', () => {
+    const s = splitRealizedBySymbol({ BTCUSDT: 6.17, VELVETUSDT: -7.03, TACUSDT: -2.69 });
+    expect(s.botUsd).toBe(6.17);
+    expect(s.manualUsd).toBe(-9.72);
+    expect(s.manualSymbols).toEqual(['TACUSDT', 'VELVETUSDT']); // sorted
+    expect(s.hasManual).toBe(true);
+  });
+
+  it('BTC-only account → no manual split flagged', () => {
+    const s = splitRealizedBySymbol({ BTCUSDT: 6.17 });
+    expect(s.botUsd).toBe(6.17);
+    expect(s.manualUsd).toBe(0);
+    expect(s.manualSymbols).toEqual([]);
+    expect(s.hasManual).toBe(false);
+  });
+
+  it('empty map → all zero, no manual', () => {
+    expect(splitRealizedBySymbol({})).toEqual({
+      botUsd: 0, manualUsd: 0, manualSymbols: [], hasManual: false,
+    });
   });
 });
 

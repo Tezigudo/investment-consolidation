@@ -7,6 +7,7 @@ import { useFuturesAnalytics } from '../../hooks/usePortfolio';
 import { AreaChart } from '../../components/charts';
 import { M } from './styles';
 import type { FuturesExitPlan } from '@consolidate/shared';
+import { splitRealizedBySymbol } from '@consolidate/shared';
 
 const UP = 'var(--up, #3fb950)';
 const DOWN = 'var(--down, #f85149)';
@@ -81,6 +82,23 @@ export function FuturesTab({ privacy }: { privacy: boolean }) {
             <Stat label={`Realized ${days}d`} value={usd(data.account.realizedPnlUsd, privacy)} color={sc(data.account.realizedPnlUsd)} />
             <Stat label={`Funding ${days}d`} value={usd(data.account.fundingNetUsd, privacy)} color={sc(data.account.fundingNetUsd)} />
           </div>
+
+          {/* realized split — bot (BTC) vs manual alt trades, so a red Realized
+              isn't misread as the bot losing money (only shows when there ARE
+              non-BTC hand trades on the account in the window). */}
+          {!privacy && (() => {
+            const s = splitRealizedBySymbol(data.account.realizedBySymbol);
+            return s.hasManual ? (
+              <div style={{ ...M.card, marginBottom: 6, fontSize: 11, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ color: MUTED }}>Realized split</span>
+                <span style={{ fontFamily: 'var(--mono)' }}>
+                  <span style={{ color: sc(s.botUsd) }}>BTC bot {usd(s.botUsd)}</span>
+                  <span style={{ color: MUTED }}> · </span>
+                  <span style={{ color: sc(s.manualUsd) }} title={s.manualSymbols.join(', ')}>manual {usd(s.manualUsd)}</span>
+                </span>
+              </div>
+            ) : null;
+          })()}
 
           {/* reconciliation */}
           {data.reconciliation && data.reconciliation.likelySameAccount != null && (

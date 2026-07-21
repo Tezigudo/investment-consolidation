@@ -460,7 +460,15 @@ export const PG_MIGRATIONS: Migration[] = [
     `,
   },
   {
-    version: 17,
+    // NOTE: numbered 18, not 17. Prod's _migrations already had version 17
+    // (`dime_usd_withdrawals`, applied 2026-07-19) from the unmerged
+    // feat/futures-in-total branch, which was deployed to Fly but never merged
+    // to main. This migration originally shipped as v17 and was silently
+    // SKIPPED on prod (runner saw "17 applied") — the ADD COLUMNs never ran,
+    // 500ing /futures/positions. Renumbered to the next free version so the
+    // runner actually applies it. (Reconcile the divergent dime migration
+    // history separately — see project_dime_sync_gap.)
+    version: 18,
     name: 'futures_positions_resting_brackets',
     up: `
       -- Ground-truth resting reduce-only bracket orders (SL/TP) for each open

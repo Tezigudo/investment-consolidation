@@ -151,6 +151,20 @@ describe('deriveLegStats', () => {
     expect(leg.isHalted).toBe(true);
     expect(leg.strategy).toBe('cnh');
   });
+
+  it('a break-even ($0) trade is neither a win nor a loss', () => {
+    const trades = pairBotTrades([
+      ev({ source: 'Y', kind: 'entry', bot_ts_ms: T0, equity_usd: 100 }),
+      ev({ source: 'Y', kind: 'exit', bot_ts_ms: T0 + 1, equity_usd: 100 }), // pnl 0
+      ev({ source: 'Y', kind: 'entry', bot_ts_ms: T0 + 2, equity_usd: 100 }),
+      ev({ source: 'Y', kind: 'exit', bot_ts_ms: T0 + 3, equity_usd: 108 }), // +8 win
+    ]);
+    const [leg] = deriveLegStats(trades, new Map());
+    expect(leg.trades).toBe(2);
+    expect(leg.wins).toBe(1);
+    expect(leg.losses).toBe(0);       // $0 is NOT a loss
+    expect(leg.winRatePct).toBe(100); // 1 win / 1 decided (break-even excluded)
+  });
 });
 
 describe('reconcileEquity', () => {

@@ -326,7 +326,10 @@ export function deriveLegStats(
       FuturesBotTrade & { pnlUsd: number }
     >;
     const wins = scored.filter((t) => t.pnlUsd > 0).length;
-    const losses = scored.filter((t) => t.pnlUsd <= 0).length;
+    // Strictly < 0 — a break-even ($0) trade is neither a win nor a loss. (A
+    // boot-flatten with insufficient telemetry used to compute exactly $0 and
+    // get miscounted as a loss; the bot now emits real close price + equity.)
+    const losses = scored.filter((t) => t.pnlUsd < 0).length;
     const netPnlUsd = round2(scored.reduce((s, t) => s + t.pnlUsd, 0));
     const l = live.get(source);
     out.push({
@@ -335,7 +338,9 @@ export function deriveLegStats(
       trades: closed.length,
       wins,
       losses,
-      winRatePct: scored.length ? round1((wins / scored.length) * 100) : null,
+      // Win rate over DECIDED trades (wins + losses) — break-evens are excluded
+      // so they don't dilute the rate or produce a 0/0 when a leg has only them.
+      winRatePct: wins + losses ? round1((wins / (wins + losses)) * 100) : null,
       netPnlUsd,
       currentEquityUsd: l?.currentEquityUsd ?? null,
       isHalted: l?.isHalted ?? false,

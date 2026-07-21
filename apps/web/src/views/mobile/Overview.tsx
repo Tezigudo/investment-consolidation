@@ -1118,6 +1118,7 @@ function summarizeBotEvent(ev: BotEventRow): string {
     case 'boot_flatten': return 'boot flatten';
     case 'order_failed': return 'order failed';
     case 'signal_skipped': return `signal skipped: ${(ev.payload?.reason as string) ?? '?'}`;
+    case 'daily_loss_breaker': return 'daily-loss breaker · entries blocked';
   }
 }
 

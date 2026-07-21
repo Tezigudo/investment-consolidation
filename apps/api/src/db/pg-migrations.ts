@@ -460,14 +460,42 @@ export const PG_MIGRATIONS: Migration[] = [
     `,
   },
   {
-    // NOTE: numbered 18, not 17. Prod's _migrations already had version 17
-    // (`dime_usd_withdrawals`, applied 2026-07-19) from the unmerged
-    // feat/futures-in-total branch, which was deployed to Fly but never merged
-    // to main. This migration originally shipped as v17 and was silently
-    // SKIPPED on prod (runner saw "17 applied") — the ADD COLUMNs never ran,
-    // 500ing /futures/positions. Renumbered to the next free version so the
-    // runner actually applies it. (Reconcile the divergent dime migration
-    // history separately — see project_dime_sync_gap.)
+    version: 17,
+    name: 'dime_usd_withdrawals',
+    up: `
+      -- Cash withdrawn OUT of the DIME settlement wallet (proceeds that
+      -- left the investment world entirely — e.g. moved to a bank to pay
+      -- a bill). buildDimeCashRow synthesises idle DIME USD purely from
+      -- trades as sum(SELL) − sum(BUY); it has no way to know the user
+      -- later pulled that USD out, so it kept showing phantom idle cash.
+      -- This ledger lets the cash-row calc subtract withdrawals:
+      --   usd = sum(SELL) − sum(BUY) − sum(withdrawals).
+      --
+      -- Deliberately its OWN table, NOT a negative row in deposits:
+      -- income.ts sums SUM(amount_usd) FROM deposits for the income stat,
+      -- deposits.ts lists them, and portfolio-history reads MIN(ts) — a
+      -- withdrawal booked there would corrupt all three. Zero blast radius.
+      --
+      -- UNIQUE(source) makes hand-entered inserts idempotent (ON CONFLICT
+      -- (source) DO NOTHING). Schema only — no data seeded here.
+      CREATE TABLE IF NOT EXISTS dime_usd_withdrawals (
+        id          BIGSERIAL PRIMARY KEY,
+        amount_usd  NUMERIC NOT NULL,
+        ts          TIMESTAMPTZ NOT NULL DEFAULT now(),
+        note        TEXT,
+        source      TEXT
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_dime_usd_withdrawals_source
+        ON dime_usd_withdrawals(source);
+    `,
+  },
+  {
+    // v18, not 17: prod already had v17 = dime_usd_withdrawals (the migration
+    // above — deployed from a worktree before this branch merged) when the
+    // futures-brackets work landed, so it took the next free number. Both now
+    // sit in the array in version order; on prod both are already applied, on a
+    // fresh DB both run in sequence. (Origin of the divergence: the dime v37/v38
+    // work was deployed but unmerged — see project_dime_sync_gap.)
     version: 18,
     name: 'futures_positions_resting_brackets',
     up: `

@@ -222,6 +222,14 @@ export interface FuturesPosition {
   liquidationPrice: number | null;
   notionalUsd: number;         // |positionAmt| × markPrice
   updatedAt: number;           // ms
+  // Resting reduce-only bracket orders on the account (Tier 2 — the droplet
+  // relay fetches /fapi/v1/openOrders and matches SL=STOP_MARKET,
+  // TP=TAKE_PROFIT_MARKET by symbol). null when none placed / not fetched.
+  // ACCOUNT-level: the relay reads ONE account, and futures_positions is keyed
+  // by symbol (one BTC row) — for per-LEG SL/TP that survives that collision,
+  // see FuturesBotLegStats.openExit (synthesized from each leg's own telemetry).
+  slPriceUsd?: number | null;
+  tpPriceUsd?: number | null;
 }
 
 export interface FuturesEquityPoint {
@@ -254,6 +262,22 @@ export interface FuturesAccountSummary {
   netIncomeUsd: number;        // realized + fundingNet − commission
 }
 
+// The pending exit of an OPEN bot trade: where it stops, and when the
+// time-stop force-closes it. Reconstructed from the entry event's telemetry
+// (sl_price/tp_price for market entries, or fill ± sl_distance/tp_distance for
+// the live LIMIT legs) plus a per-strategy hold-window map. null on closed
+// trades. NOTE: barsLeft is the OUTER ceiling (the max-hold time-stop), NOT an
+// ETA — most trades exit far sooner via the bracket or channel condition.
+export interface FuturesExitPlan {
+  slPriceUsd: number | null;
+  tpPriceUsd: number | null;      // null for SL-only strategies (e.g. donchian)
+  exitCondition: string | null;   // human trigger, e.g. '4h close beyond 10-bar Donchian · SL 1.5×ATR'
+  maxHoldBars: number | null;     // time-stop ceiling, in entry-TF bars
+  barsHeld: number | null;        // entry-TF bars elapsed since entry
+  barsLeft: number | null;        // max(0, maxHoldBars − barsHeld)
+  barMs: number | null;           // entry-bar duration (ms) — lets the UI render bars as time
+}
+
 // Per-leg attribution from bot_events: pair each entry with its next exit.
 export interface FuturesBotTrade {
   source: string;              // bot source (leg), e.g. 'snapback-btc-cnh-short'
@@ -267,6 +291,7 @@ export interface FuturesBotTrade {
   notionalUsd: number | null;
   pnlUsd: number | null;       // equity-delta if available, else price move × qty
   exitReason: string | null;
+  exitPlan: FuturesExitPlan | null;  // pending exit (open trades only; null once closed)
 }
 
 export interface FuturesBotLegStats {
@@ -280,6 +305,10 @@ export interface FuturesBotLegStats {
   currentEquityUsd: number | null;
   isHalted: boolean;
   openTrade: boolean;          // an entry without a matching exit
+  // The open trade's pending exit (SL/TP + condition + bars-left), carried on
+  // the leg so per-leg SL/TP/exit is displayable without the account position
+  // row (which can't be leg-attributed — see FuturesPosition). null when flat.
+  openExit: FuturesExitPlan | null;
 }
 
 export interface FuturesReconciliation {

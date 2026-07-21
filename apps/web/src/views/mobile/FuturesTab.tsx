@@ -6,9 +6,18 @@ import { useState } from 'react';
 import { useFuturesAnalytics } from '../../hooks/usePortfolio';
 import { AreaChart } from '../../components/charts';
 import { M } from './styles';
+import type { FuturesExitPlan } from '@consolidate/shared';
 
 const UP = 'var(--up, #3fb950)';
 const DOWN = 'var(--down, #f85149)';
+const MUTED = 'var(--muted)';
+
+function barsLeftStr(plan: FuturesExitPlan): string | null {
+  if (plan.barsLeft == null || plan.barMs == null || plan.maxHoldBars == null) return null;
+  const dLeft = (plan.barsLeft * plan.barMs) / 86_400_000;
+  const d = dLeft >= 2 ? dLeft.toFixed(0) : dLeft.toFixed(1);
+  return `~${d}d left · ${plan.barsLeft}/${plan.maxHoldBars} bars`;
+}
 
 function usd(v: number | null | undefined, privacy = false): string {
   if (privacy) return '•••';
@@ -115,12 +124,21 @@ export function FuturesTab({ privacy }: { privacy: boolean }) {
           {data.positions.length === 0
             ? <div style={M.empty as React.CSSProperties}>No open positions.</div>
             : data.positions.map((p) => (
-              <div key={p.symbol} style={{ ...M.card, marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  <div style={{ fontWeight: 700 }}>{p.symbol} <span style={{ color: p.positionAmt < 0 ? DOWN : UP, fontSize: 11 }}>{p.positionAmt < 0 ? 'SHORT' : 'LONG'} {p.leverage}×</span></div>
-                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>entry {usd(p.entryPrice)} · mark {usd(p.markPrice)}</div>
+              <div key={p.symbol} style={{ ...M.card, marginBottom: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontWeight: 700 }}>{p.symbol} <span style={{ color: p.positionAmt < 0 ? DOWN : UP, fontSize: 11 }}>{p.positionAmt < 0 ? 'SHORT' : 'LONG'} {p.leverage}×</span></div>
+                    <div style={{ fontSize: 11, color: MUTED }}>entry {usd(p.entryPrice)} · mark {usd(p.markPrice)}</div>
+                  </div>
+                  <div style={{ fontFamily: 'var(--mono)', fontWeight: 700, color: sc(p.unrealizedPnlUsd) }}>{usd(p.unrealizedPnlUsd, privacy)}</div>
                 </div>
-                <div style={{ fontFamily: 'var(--mono)', fontWeight: 700, color: sc(p.unrealizedPnlUsd) }}>{usd(p.unrealizedPnlUsd, privacy)}</div>
+                {(p.slPriceUsd != null || p.tpPriceUsd != null) && !privacy && (
+                  <div style={{ fontSize: 11, marginTop: 4, fontFamily: 'var(--mono)' }}>
+                    <span style={{ color: p.slPriceUsd != null ? DOWN : MUTED }}>SL {p.slPriceUsd != null ? usd(p.slPriceUsd) : '—'}</span>
+                    <span style={{ color: MUTED }}> · </span>
+                    <span style={{ color: p.tpPriceUsd != null ? UP : MUTED }}>TP {p.tpPriceUsd != null ? usd(p.tpPriceUsd) : '—'}</span>
+                  </div>
+                )}
               </div>
             ))}
 
@@ -134,11 +152,22 @@ export function FuturesTab({ privacy }: { privacy: boolean }) {
                   <span style={{ fontWeight: 700 }}>{l.source.replace('snapback-btc-', '').replace('snapback-btc', 'v1')}</span>
                   <span style={{ color: l.isHalted ? DOWN : UP, fontSize: 11, fontWeight: 600 }}>{l.isHalted ? 'HALTED' : 'live'}</span>
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4, display: 'flex', gap: 12 }}>
+                <div style={{ fontSize: 12, color: MUTED, marginTop: 4, display: 'flex', gap: 12 }}>
                   <span>{l.trades} trades</span>
                   <span>WR {l.winRatePct == null ? '—' : `${l.winRatePct.toFixed(0)}%`}</span>
                   <span style={{ color: sc(l.netPnlUsd) }}>net {usd(l.netPnlUsd, privacy)}</span>
                 </div>
+                {l.openExit && !privacy && (
+                  <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--border)', fontSize: 11, color: MUTED }}>
+                    <div style={{ fontFamily: 'var(--mono)' }}>
+                      <span style={{ color: l.openExit.slPriceUsd != null ? DOWN : MUTED }}>SL {l.openExit.slPriceUsd != null ? usd(l.openExit.slPriceUsd) : '—'}</span>
+                      <span> · </span>
+                      <span style={{ color: l.openExit.tpPriceUsd != null ? UP : MUTED }}>TP {l.openExit.tpPriceUsd != null ? usd(l.openExit.tpPriceUsd) : '—'}</span>
+                    </div>
+                    {l.openExit.exitCondition && <div style={{ marginTop: 2 }}>exit: {l.openExit.exitCondition}</div>}
+                    {barsLeftStr(l.openExit) && <div style={{ marginTop: 2 }}>{barsLeftStr(l.openExit)}</div>}
+                  </div>
+                )}
               </div>
             ))}
         </>

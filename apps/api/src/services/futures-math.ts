@@ -9,6 +9,7 @@ import type {
   FuturesBotTrade,
   FuturesBotLegStats,
   FuturesReconciliation,
+  FuturesExitPlan,
 } from '@consolidate/shared';
 
 /** UTC calendar day (YYYY-MM-DD) for a ms timestamp. */
@@ -124,6 +125,99 @@ export interface BotEventLite {
 
 const CLOSING_KINDS = new Set(['exit', 'kill_switch', 'halt', 'boot_flatten']);
 
+// ── Per-strategy exit metadata ──────────────────────────────────────────────
+// Mirrored from the deployed snapback configs (config/params.yaml,
+// config/params_donchian.yaml). The bot does NOT emit its hold window or bar
+// timeframe in telemetry, so we key them by strategy_name here. There is no
+// runtime cross-check — the bot's config is the source of truth; if a value
+// diverges there, update it here too. Unknown strategies degrade gracefully
+// (SL/TP still show from the payload; exitCondition/bars are just omitted).
+const MIN_MS = 60_000;
+const HOUR_MS = 60 * MIN_MS;
+
+interface StrategyMeta {
+  barMs: number;         // entry-timeframe bar duration
+  maxHoldBars: number;   // time-stop: flatten after this many bars
+  placesTp: boolean;     // does the entry place a TP bracket leg?
+  exitCondition: string; // human-readable "what closes this position"
+}
+
+const STRATEGY_META: Record<string, StrategyMeta> = {
+  // 15m entry TF; fixed 1.5% SL / 3.0% TP bracket; time-stop 1344 bars (14d).
+  'multifactor-v1': {
+    barMs: 15 * MIN_MS,
+    maxHoldBars: 1344,
+    placesTp: true,
+    exitCondition: 'SL 1.5% / TP 3.0% bracket',
+  },
+  // 4h entry TF; SL 1.5×ATR(20), NO TP — exits on a 4h close beyond the 10-bar
+  // Donchian channel; time-stop 48 bars (8d).
+  'donchian-v3': {
+    barMs: 4 * HOUR_MS,
+    maxHoldBars: 48,
+    placesTp: false,
+    exitCondition: '4h close beyond 10-bar Donchian · SL 1.5×ATR',
+  },
+};
+
+function payloadNum(
+  p: Record<string, unknown> | null | undefined,
+  key: string,
+): number | null {
+  const v = p?.[key];
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/**
+ * Build the exit plan for an OPEN trade from its entry event. SL/TP come from
+ * the entry payload — either absolute (`sl_price`/`tp_price`, market entries)
+ * or reconstructed from the fill ± distance (`sl_distance`/`tp_distance`, the
+ * live limit legs). The per-strategy map supplies the exit condition + hold
+ * window; a TP is suppressed for SL-only strategies even if a phantom
+ * `tp_distance` rode along in the payload (donchian records one but places no
+ * TP leg). `nowMs` anchors bars-held so the countdown matches the payload's
+ * generation time.
+ */
+function computeExitPlan(
+  entry: BotEventLite,
+  side: 'long' | 'short' | null,
+  entryPrice: number | null,
+  nowMs: number,
+): FuturesExitPlan {
+  const meta = entry.strategy ? STRATEGY_META[entry.strategy] : undefined;
+  const p = entry.payload;
+  const dir = side === 'short' ? -1 : 1; // long: SL below / TP above; short mirrors
+
+  let slPriceUsd = payloadNum(p, 'sl_price');
+  if (slPriceUsd == null && entryPrice != null) {
+    const d = payloadNum(p, 'sl_distance');
+    if (d != null) slPriceUsd = round2(entryPrice - dir * d);
+  }
+  let tpPriceUsd = payloadNum(p, 'tp_price');
+  if (tpPriceUsd == null && entryPrice != null) {
+    const d = payloadNum(p, 'tp_distance');
+    if (d != null) tpPriceUsd = round2(entryPrice + dir * d);
+  }
+  if (meta && !meta.placesTp) tpPriceUsd = null; // suppress phantom TP
+
+  let barsHeld: number | null = null;
+  let barsLeft: number | null = null;
+  if (meta) {
+    barsHeld = Math.max(0, Math.floor((nowMs - entry.bot_ts_ms) / meta.barMs));
+    barsLeft = Math.max(0, meta.maxHoldBars - barsHeld);
+  }
+
+  return {
+    slPriceUsd,
+    tpPriceUsd,
+    exitCondition: meta?.exitCondition ?? null,
+    maxHoldBars: meta?.maxHoldBars ?? null,
+    barsHeld,
+    barsLeft,
+    barMs: meta?.barMs ?? null,
+  };
+}
+
 /**
  * Pair each `entry` with the next closing event for the same source, in time
  * order, producing one FuturesBotTrade per round-trip. A trailing `entry`
@@ -134,7 +228,10 @@ const CLOSING_KINDS = new Set(['exit', 'kill_switch', 'halt', 'boot_flatten']);
  * is the bot's own ground truth; falls back to price-move × qty when equity
  * isn't on the events.
  */
-export function pairBotTrades(events: BotEventLite[]): FuturesBotTrade[] {
+export function pairBotTrades(
+  events: BotEventLite[],
+  nowMs: number = Date.now(),
+): FuturesBotTrade[] {
   const bySource = new Map<string, BotEventLite[]>();
   for (const e of events) {
     const arr = bySource.get(e.source) ?? [];
@@ -150,14 +247,14 @@ export function pairBotTrades(events: BotEventLite[]): FuturesBotTrade[] {
       if (e.kind === 'entry') {
         // A new entry while one is open shouldn't happen (1-position rule),
         // but if it does, close the prior as open-unresolved and start fresh.
-        if (open) trades.push(makeTrade(source, open, null));
+        if (open) trades.push(makeTrade(source, open, null, nowMs));
         open = e;
       } else if (CLOSING_KINDS.has(e.kind) && open) {
-        trades.push(makeTrade(source, open, e));
+        trades.push(makeTrade(source, open, e, nowMs));
         open = null;
       }
     }
-    if (open) trades.push(makeTrade(source, open, null)); // still open
+    if (open) trades.push(makeTrade(source, open, null, nowMs)); // still open
   }
   return trades.sort((a, b) => a.entryTs - b.entryTs);
 }
@@ -166,6 +263,7 @@ function makeTrade(
   source: string,
   entry: BotEventLite,
   exit: BotEventLite | null,
+  nowMs: number,
 ): FuturesBotTrade {
   const side = entry.side ?? null;
   const entryPrice = finiteOrNull(entry.price_usd);
@@ -200,6 +298,8 @@ function makeTrade(
           ? (exit.payload.exit_reason as string)
           : exit.kind)
       : null,
+    // Pending exit only exists while the trade is open.
+    exitPlan: exit ? null : computeExitPlan(entry, side, entryPrice, nowMs),
   };
 }
 
@@ -240,6 +340,7 @@ export function deriveLegStats(
       currentEquityUsd: l?.currentEquityUsd ?? null,
       isHalted: l?.isHalted ?? false,
       openTrade: ts.some((t) => t.exitTs == null),
+      openExit: ts.find((t) => t.exitTs == null)?.exitPlan ?? null,
     });
   }
   return out.sort((a, b) => a.source.localeCompare(b.source));

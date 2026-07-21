@@ -459,6 +459,20 @@ export const PG_MIGRATIONS: Migration[] = [
       ));
     `,
   },
+  {
+    version: 17,
+    name: 'futures_positions_resting_brackets',
+    up: `
+      -- Ground-truth resting reduce-only bracket orders (SL/TP) for each open
+      -- position. The droplet relay (tools/consolidate_futures_push.py) fetches
+      -- /fapi/v1/openOrders and matches STOP_MARKET → sl_price,
+      -- TAKE_PROFIT_MARKET → tp_price by symbol. Nullable: donchian legs place
+      -- SL only (tp_price stays NULL), and old relays that don't push these
+      -- leave both NULL. Additive + idempotent so prod applies cleanly.
+      ALTER TABLE futures_positions ADD COLUMN IF NOT EXISTS sl_price DOUBLE PRECISION;
+      ALTER TABLE futures_positions ADD COLUMN IF NOT EXISTS tp_price DOUBLE PRECISION;
+    `,
+  },
 ];
 
 export async function runPgMigrations(pool: Pool) {

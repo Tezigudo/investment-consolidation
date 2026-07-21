@@ -187,3 +187,78 @@ describe('reconcileEquity', () => {
     expect(r.likelySameAccount).toBeNull();
   });
 });
+
+describe('exit plan (open trades)', () => {
+  const H4 = 4 * 60 * 60 * 1000;
+  const M15 = 15 * 60 * 1000;
+  const NOW = T0 + 12 * H4; // 12 4h-bars after entry
+
+  it('reconstructs donchian SL from sl_distance, suppresses phantom TP, counts bars', () => {
+    const [t] = pairBotTrades([
+      ev({ strategy: 'donchian-v3', kind: 'entry', side: 'long', bot_ts_ms: T0,
+        price_usd: 108000, payload: { filled_as: 'limit', sl_distance: 1600, tp_distance: 3000 } }),
+    ], NOW);
+    const p = t.exitPlan!;
+    expect(p.slPriceUsd).toBe(106400);      // 108000 − 1600 (long SL below)
+    expect(p.tpPriceUsd).toBeNull();        // donchian places NO TP — phantom tp_distance ignored
+    expect(p.exitCondition).toMatch(/Donchian/);
+    expect(p.maxHoldBars).toBe(48);
+    expect(p.barsHeld).toBe(12);
+    expect(p.barsLeft).toBe(36);
+    expect(p.barMs).toBe(H4);
+  });
+
+  it('shorts put SL above / TP below the fill; unknown strategy has no hold window', () => {
+    const [t] = pairBotTrades([
+      ev({ strategy: 'cnh-hybrid-short-v1', kind: 'entry', side: 'short', bot_ts_ms: T0,
+        price_usd: 100, payload: { sl_distance: 5, tp_distance: 8 } }),
+    ], NOW);
+    const p = t.exitPlan!;
+    expect(p.slPriceUsd).toBe(105);
+    expect(p.tpPriceUsd).toBe(92);
+    expect(p.maxHoldBars).toBeNull();
+    expect(p.barsLeft).toBeNull();
+    expect(p.exitCondition).toBeNull();
+  });
+
+  it('uses absolute sl_price/tp_price for market entries (multifactor-v1)', () => {
+    const [t] = pairBotTrades([
+      ev({ strategy: 'multifactor-v1', kind: 'entry', side: 'long', bot_ts_ms: T0,
+        price_usd: 100000, payload: { filled_as: 'market', sl_price: 98500, tp_price: 103000 } }),
+    ], T0 + 100 * M15);
+    const p = t.exitPlan!;
+    expect(p.slPriceUsd).toBe(98500);
+    expect(p.tpPriceUsd).toBe(103000);
+    expect(p.exitCondition).toMatch(/bracket/);
+    expect(p.maxHoldBars).toBe(1344);
+    expect(p.barsHeld).toBe(100);
+    expect(p.barsLeft).toBe(1244);
+  });
+
+  it('closed trades carry no exit plan', () => {
+    const [t] = pairBotTrades([
+      ev({ strategy: 'donchian-v3', kind: 'entry', side: 'long', bot_ts_ms: T0, price_usd: 108000,
+        payload: { sl_distance: 1600 } }),
+      ev({ kind: 'exit', bot_ts_ms: T0 + H4, price_usd: 110000, payload: { exit_reason: 'channel_exit' } }),
+    ], NOW);
+    expect(t.exitPlan).toBeNull();
+  });
+
+  it('deriveLegStats surfaces the open trade’s exit plan; a flat leg has none', () => {
+    const openTrades = pairBotTrades([
+      ev({ source: 'L', strategy: 'donchian-v3', kind: 'entry', side: 'long', bot_ts_ms: T0,
+        price_usd: 108000, equity_usd: 130, payload: { sl_distance: 1600 } }),
+    ], NOW);
+    const [openLeg] = deriveLegStats(openTrades, new Map());
+    expect(openLeg.openTrade).toBe(true);
+    expect(openLeg.openExit?.slPriceUsd).toBe(106400);
+    expect(openLeg.openExit?.barsLeft).toBe(36);
+
+    const flatTrades = pairBotTrades([
+      ev({ source: 'L', strategy: 'donchian-v3', kind: 'entry', bot_ts_ms: T0, equity_usd: 130,
+        payload: { sl_distance: 1600 } }),
+      ev({ source: 'L', kind: 'exit', bot_ts_ms: T0 + 5, equity_usd: 140 }),
+    ], NOW);
+    expect(deriveLegStats(flatTrades, new Map())[0].openExit).toBeNull();
+  });
+});

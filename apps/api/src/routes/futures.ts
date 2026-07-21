@@ -45,8 +45,14 @@ const PositionsBody = z.object({
       unrealizedPnlUsd: fin(),
       liquidationPrice: fin().positive().nullable().default(null),
       leverage: fin().nonnegative(),
+      slPrice: fin().positive().nullable().default(null),
+      tpPrice: fin().positive().nullable().default(null),
     }),
   ).max(500),
+  // Did the relay actually read open-orders this push? false (the default, and
+  // what a fetch failure sends) → the server PRESERVES existing sl/tp instead
+  // of letting a transient blip null out a bracket that's still resting.
+  bracketsKnown: z.boolean().default(false),
 });
 
 const IncomeBody = z.object({
@@ -82,7 +88,7 @@ export async function futuresRoutes(app: FastifyInstance) {
   app.post('/futures/positions', async (req, reply) => {
     const p = PositionsBody.safeParse(req.body);
     if (!p.success) { reply.code(400); return { error: 'invalid', details: p.error.flatten().fieldErrors }; }
-    await ingestFuturesPositions(p.data.positions);
+    await ingestFuturesPositions(p.data.positions, p.data.bracketsKnown);
     return { ok: true, count: p.data.positions.length };
   });
 

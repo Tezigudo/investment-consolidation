@@ -436,6 +436,43 @@ export const PG_MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_futures_income_type ON futures_income(income_type);
     `,
   },
+  {
+    version: 16,
+    name: 'bot_events_kind_add_daily_loss_breaker',
+    up: `
+      -- Extend the kind CHECK constraint to allow 'daily_loss_breaker'.
+      -- This kind is emitted by snapback-btc's daily-loss circuit breaker
+      -- (risk.check_daily_loss): when intraday drawdown hits MAX_DAILY_LOSS_PCT
+      -- (2%) the bot enqueues this event to notify the dashboard that new
+      -- entries are blocked until the next UTC midnight.
+      --
+      -- Pattern mirrors migration 14 (heartbeat_snapshot): drop the existing
+      -- named constraint, recreate with the expanded set. IF EXISTS makes this
+      -- idempotent on re-run.
+      ALTER TABLE bot_events DROP CONSTRAINT IF EXISTS bot_events_kind_check;
+      ALTER TABLE bot_events ADD CONSTRAINT bot_events_kind_check CHECK (kind IN (
+        'boot', 'heartbeat', 'heartbeat_snapshot', 'dry_run_signal',
+        'entry', 'exit',
+        'kill_switch', 'halt', 'boot_flatten',
+        'order_failed', 'signal_skipped',
+        'daily_loss_breaker'
+      ));
+    `,
+  },
+  {
+    version: 17,
+    name: 'futures_positions_resting_brackets',
+    up: `
+      -- Ground-truth resting reduce-only bracket orders (SL/TP) for each open
+      -- position. The droplet relay (tools/consolidate_futures_push.py) fetches
+      -- /fapi/v1/openOrders and matches STOP_MARKET → sl_price,
+      -- TAKE_PROFIT_MARKET → tp_price by symbol. Nullable: donchian legs place
+      -- SL only (tp_price stays NULL), and old relays that don't push these
+      -- leave both NULL. Additive + idempotent so prod applies cleanly.
+      ALTER TABLE futures_positions ADD COLUMN IF NOT EXISTS sl_price DOUBLE PRECISION;
+      ALTER TABLE futures_positions ADD COLUMN IF NOT EXISTS tp_price DOUBLE PRECISION;
+    `,
+  },
 ];
 
 export async function runPgMigrations(pool: Pool) {

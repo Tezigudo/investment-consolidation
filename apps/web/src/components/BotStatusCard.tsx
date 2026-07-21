@@ -81,6 +81,8 @@ function eventSummary(ev: BotEventRow): string {
       return `order failed: ${(ev.payload?.message as string | undefined) ?? 'unknown'}`;
     case 'signal_skipped':
       return `signal skipped: ${(ev.payload?.reason as string | undefined) ?? '?'}`;
+    case 'daily_loss_breaker':
+      return 'daily-loss breaker · new entries blocked until 00:00 UTC';
   }
 }
 

@@ -22,7 +22,7 @@ import type { BotEventKind } from '@consolidate/shared';
 // absent — it's API-internal (services/bot-events.ts rewrites kind='heartbeat'
 // to 'heartbeat_snapshot' on the hourly persist path). A bot pushing the
 // snapshot kind directly would corrupt the cleanup semantics.
-const POST_KIND = z.enum([
+export const POST_KIND = z.enum([
   'boot',
   'heartbeat',
   'dry_run_signal',
@@ -33,6 +33,7 @@ const POST_KIND = z.enum([
   'boot_flatten',
   'order_failed',
   'signal_skipped',
+  'daily_loss_breaker',
 ]);
 
 // Kinds queryable from the GET /bot-events filter — includes the internal

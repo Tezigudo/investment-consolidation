@@ -21,6 +21,7 @@ import type {
   FuturesBotLegStats,
   FuturesIncomeBucket,
   FuturesBotTrade,
+  FuturesExitPlan,
 } from '@consolidate/shared';
 
 const RANGES = [
@@ -62,6 +63,15 @@ function fmtTs(ms: number): string {
     timeZone: 'Asia/Bangkok', month: 'short', day: 'numeric',
     hour: '2-digit', minute: '2-digit', hour12: false,
   });
+}
+// "~6d left · 36/48 bars" from the time-stop ceiling. Null when the strategy
+// has no known hold window (unknown leg) — the ceiling isn't an ETA, just the
+// outer force-close bound.
+function fmtBarsLeft(plan: FuturesExitPlan): string | null {
+  if (plan.barsLeft == null || plan.barMs == null || plan.maxHoldBars == null) return null;
+  const dLeft = (plan.barsLeft * plan.barMs) / 86_400_000;
+  const d = dLeft >= 2 ? dLeft.toFixed(0) : dLeft.toFixed(1);
+  return `~${d}d left · ${plan.barsLeft}/${plan.maxHoldBars} bars`;
 }
 
 interface Props {
@@ -276,7 +286,7 @@ function PnLBars({ buckets, privacy }: { buckets: FuturesIncomeBucket[]; privacy
 function PositionsTable({ positions, privacy }: { positions: FuturesPosition[]; privacy: boolean }) {
   return (
     <table style={tbl}>
-      <thead><tr>{['Symbol', 'Side', 'Size', 'Entry', 'Mark', 'uPnL', 'Lev', 'Liq.'].map((h) => <th key={h} style={th}>{h}</th>)}</tr></thead>
+      <thead><tr>{['Symbol', 'Side', 'Size', 'Entry', 'Mark', 'uPnL', 'Lev', 'Liq.', 'SL', 'TP'].map((h) => <th key={h} style={th}>{h}</th>)}</tr></thead>
       <tbody>
         {positions.map((p) => {
           const short = p.positionAmt < 0;
@@ -290,6 +300,8 @@ function PositionsTable({ positions, privacy }: { positions: FuturesPosition[]; 
               <td style={{ ...td, color: signColor(p.unrealizedPnlUsd) }}>{usd(p.unrealizedPnlUsd, privacy)}</td>
               <td style={td}>{p.leverage}×</td>
               <td style={td}>{p.liquidationPrice ? usd(p.liquidationPrice) : '—'}</td>
+              <td style={{ ...td, color: p.slPriceUsd != null ? DOWN : MUTED }}>{p.slPriceUsd != null ? usd(p.slPriceUsd) : '—'}</td>
+              <td style={{ ...td, color: p.tpPriceUsd != null ? UP : MUTED }}>{p.tpPriceUsd != null ? usd(p.tpPriceUsd) : '—'}</td>
             </tr>
           );
         })}
@@ -298,10 +310,28 @@ function PositionsTable({ positions, privacy }: { positions: FuturesPosition[]; 
   );
 }
 
+// Compact stacked cell for a leg's open-trade exit plan: SL/TP line, the exit
+// condition, and the time-stop ceiling. Renders "—" when the leg is flat.
+function ExitPlanCell({ plan }: { plan: FuturesExitPlan | null }) {
+  if (!plan) return <span style={{ color: MUTED }}>—</span>;
+  const bars = fmtBarsLeft(plan);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 1, lineHeight: 1.35 }}>
+      <div>
+        <span style={{ color: plan.slPriceUsd != null ? DOWN : MUTED }}>SL {plan.slPriceUsd != null ? usd(plan.slPriceUsd) : '—'}</span>
+        <span style={{ color: MUTED }}> · </span>
+        <span style={{ color: plan.tpPriceUsd != null ? UP : MUTED }}>TP {plan.tpPriceUsd != null ? usd(plan.tpPriceUsd) : '—'}</span>
+      </div>
+      {plan.exitCondition && <div style={{ color: MUTED, fontSize: 11 }}>{plan.exitCondition}</div>}
+      {bars && <div style={{ color: MUTED, fontSize: 11 }}>{bars}</div>}
+    </div>
+  );
+}
+
 function LegTable({ legs, privacy }: { legs: FuturesBotLegStats[]; privacy: boolean }) {
   return (
     <table style={tbl}>
-      <thead><tr>{['Leg', 'Strategy', 'Trades', 'Win rate', 'Net PnL', 'Equity', 'State'].map((h) => <th key={h} style={th}>{h}</th>)}</tr></thead>
+      <thead><tr>{['Leg', 'Strategy', 'Trades', 'Win rate', 'Net PnL', 'Equity', 'State', 'Open exit (SL/TP · trigger)'].map((h) => <th key={h} style={th}>{h}</th>)}</tr></thead>
       <tbody>
         {legs.map((l) => (
           <tr key={l.source}>
@@ -312,6 +342,7 @@ function LegTable({ legs, privacy }: { legs: FuturesBotLegStats[]; privacy: bool
             <td style={{ ...td, color: signColor(l.netPnlUsd) }}>{usd(l.netPnlUsd, privacy)}</td>
             <td style={td}>{usd(l.currentEquityUsd, privacy)}</td>
             <td style={{ ...td, color: l.isHalted ? DOWN : UP }}>{l.isHalted ? 'HALTED' : 'live'}</td>
+            <td style={td}>{privacy ? '•••' : <ExitPlanCell plan={l.openExit} />}</td>
           </tr>
         ))}
       </tbody>

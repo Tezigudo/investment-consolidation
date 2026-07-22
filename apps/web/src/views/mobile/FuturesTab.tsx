@@ -7,7 +7,7 @@ import { useFuturesAnalytics } from '../../hooks/usePortfolio';
 import { AreaChart } from '../../components/charts';
 import { M } from './styles';
 import type { FuturesExitPlan } from '@consolidate/shared';
-import { splitRealizedBySymbol } from '@consolidate/shared';
+import { splitRealizedBySymbol, isBotSymbol } from '@consolidate/shared';
 
 const UP = 'var(--up, #3fb950)';
 const DOWN = 'var(--down, #f85149)';
@@ -141,11 +141,13 @@ export function FuturesTab({ privacy }: { privacy: boolean }) {
           <div style={M.section as React.CSSProperties}>Open positions ({data.positions.length})</div>
           {data.positions.length === 0
             ? <div style={M.empty as React.CSSProperties}>No open positions.</div>
-            : data.positions.map((p) => (
+            : data.positions.map((p) => {
+              const isBot = isBotSymbol(p.symbol);
+              return (
               <div key={p.symbol} style={{ ...M.card, marginBottom: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
-                    <div style={{ fontWeight: 700 }}>{p.symbol} <span style={{ color: p.positionAmt < 0 ? DOWN : UP, fontSize: 11 }}>{p.positionAmt < 0 ? 'SHORT' : 'LONG'} {p.leverage}×</span></div>
+                    <div style={{ fontWeight: 700 }}>{p.symbol} <PosTag isBot={isBot} /> <span style={{ color: p.positionAmt < 0 ? DOWN : UP, fontSize: 11 }}>{p.positionAmt < 0 ? 'SHORT' : 'LONG'} {p.leverage}×</span></div>
                     <div style={{ fontSize: 11, color: MUTED }}>entry {usd(p.entryPrice)} · mark {usd(p.markPrice)}</div>
                   </div>
                   <div style={{ fontFamily: 'var(--mono)', fontWeight: 700, color: sc(p.unrealizedPnlUsd) }}>{usd(p.unrealizedPnlUsd, privacy)}</div>
@@ -158,7 +160,8 @@ export function FuturesTab({ privacy }: { privacy: boolean }) {
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
 
           {/* bot legs */}
           <div style={M.section as React.CSSProperties}>Bot legs</div>
@@ -191,6 +194,18 @@ export function FuturesTab({ privacy }: { privacy: boolean }) {
         </>
       )}
     </div>
+  );
+}
+
+// BOT (bot-traded symbol, e.g. BTC) vs MANUAL (hand trade on the same account).
+function PosTag({ isBot }: { isBot: boolean }) {
+  return (
+    <span style={{
+      fontSize: 9, fontWeight: 700, letterSpacing: 0.5, padding: '2px 6px', borderRadius: 999,
+      verticalAlign: 'middle',
+      background: isBot ? 'rgba(47,128,199,0.18)' : 'rgba(212,160,23,0.20)',
+      color: isBot ? '#4aa3e8' : '#d4a017',
+    }}>{isBot ? 'BOT' : 'MANUAL'}</span>
   );
 }
 

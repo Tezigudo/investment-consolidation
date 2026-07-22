@@ -8,7 +8,7 @@ import {
   type IncomeRow,
   type BotEventLite,
 } from './futures-math.js';
-import { splitRealizedBySymbol } from '@consolidate/shared';
+import { splitRealizedBySymbol, isBotSymbol } from '@consolidate/shared';
 
 const DAY = 24 * 60 * 60 * 1000;
 const T0 = Date.UTC(2026, 0, 1, 12, 0, 0); // 2026-01-01T12:00Z
@@ -86,6 +86,14 @@ describe('summarizeIncome', () => {
     const s = summarizeIncome(rows);
     expect(s.realizedBySymbol).toEqual({ BTCUSDT: 0.5, VELVETUSDT: -7.03 });
     expect(s.realizedPnlUsd).toBe(-6.53); // 5.46 − 4.96 − 7.03
+  });
+});
+
+describe('isBotSymbol', () => {
+  it('BTC is a bot symbol; alts are manual', () => {
+    expect(isBotSymbol('BTCUSDT')).toBe(true);
+    expect(isBotSymbol('VELVETUSDT')).toBe(false);
+    expect(isBotSymbol('TACUSDT')).toBe(false);
   });
 });
 

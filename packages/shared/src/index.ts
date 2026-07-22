@@ -282,6 +282,16 @@ export interface FuturesAccountSummary {
  * are hand trades. Keep in sync with the bot's traded symbol. */
 export const BOT_SYMBOLS = ['BTCUSDT'] as const;
 
+/** True if a symbol is one the trading bot trades (→ a bot position/trade);
+ * false = a manual/discretionary trade on the same account. Single source of
+ * truth for the bot-vs-manual distinction across realized PnL and positions. */
+export function isBotSymbol(
+  symbol: string,
+  botSymbols: readonly string[] = BOT_SYMBOLS,
+): boolean {
+  return botSymbols.includes(symbol);
+}
+
 export interface RealizedSplit {
   botUsd: number;           // realized on bot symbols (BTC)
   manualUsd: number;        // realized on every other symbol
@@ -295,12 +305,11 @@ export function splitRealizedBySymbol(
   realizedBySymbol: Record<string, number>,
   botSymbols: readonly string[] = BOT_SYMBOLS,
 ): RealizedSplit {
-  const bot = new Set<string>(botSymbols);
   let botUsd = 0;
   let manualUsd = 0;
   const manualSymbols: string[] = [];
   for (const [sym, usd] of Object.entries(realizedBySymbol)) {
-    if (bot.has(sym)) {
+    if (isBotSymbol(sym, botSymbols)) {
       botUsd += usd;
     } else {
       manualUsd += usd;

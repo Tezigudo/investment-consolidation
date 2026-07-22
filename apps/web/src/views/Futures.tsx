@@ -23,7 +23,7 @@ import type {
   FuturesBotTrade,
   FuturesExitPlan,
 } from '@consolidate/shared';
-import { splitRealizedBySymbol } from '@consolidate/shared';
+import { splitRealizedBySymbol, isBotSymbol } from '@consolidate/shared';
 
 const RANGES = [
   { label: '7D', days: 7 },
@@ -290,6 +290,18 @@ function PnLBars({ buckets, privacy }: { buckets: FuturesIncomeBucket[]; privacy
   );
 }
 
+// BOT (bot-traded symbol, e.g. BTC) vs MANUAL (hand trade on the same account).
+function PosTag({ isBot }: { isBot: boolean }) {
+  return (
+    <span style={{
+      fontSize: 9, fontWeight: 700, letterSpacing: 0.5, padding: '2px 6px', borderRadius: 999,
+      whiteSpace: 'nowrap',
+      background: isBot ? 'rgba(47,128,199,0.18)' : 'rgba(212,160,23,0.20)',
+      color: isBot ? '#4aa3e8' : '#d4a017',
+    }}>{isBot ? 'BOT' : 'MANUAL'}</span>
+  );
+}
+
 function PositionsTable({ positions, privacy }: { positions: FuturesPosition[]; privacy: boolean }) {
   return (
     <table style={tbl}>
@@ -299,7 +311,7 @@ function PositionsTable({ positions, privacy }: { positions: FuturesPosition[]; 
           const short = p.positionAmt < 0;
           return (
             <tr key={p.symbol}>
-              <td style={td}><b>{p.symbol}</b></td>
+              <td style={td}><b>{p.symbol}</b> <PosTag isBot={isBotSymbol(p.symbol)} /></td>
               <td style={{ ...td, color: short ? DOWN : UP }}>{short ? 'SHORT' : 'LONG'}</td>
               <td style={td}>{privacy ? '•••' : `${Math.abs(p.positionAmt)} (${usd(p.notionalUsd)})`}</td>
               <td style={td}>{usd(p.entryPrice)}</td>

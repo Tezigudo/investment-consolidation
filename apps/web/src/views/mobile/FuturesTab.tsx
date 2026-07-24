@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { useFuturesAnalytics } from '../../hooks/usePortfolio';
 import { AreaChart } from '../../components/charts';
 import { M } from './styles';
-import type { FuturesExitPlan } from '@consolidate/shared';
+import type { FuturesExitPlan, ManualSymbolStats } from '@consolidate/shared';
 import { splitRealizedBySymbol, isBotSymbol } from '@consolidate/shared';
 
 const UP = 'var(--up, #3fb950)';
@@ -163,6 +163,16 @@ export function FuturesTab({ privacy }: { privacy: boolean }) {
               );
             })}
 
+          {/* manual trades — hand-traded non-bot symbols: live open status +
+              realized outcome over the range (account-side counterpart to bot
+              legs). Only shown when hand trades exist. */}
+          {data.manualTrades.length > 0 && (
+            <>
+              <div style={M.section as React.CSSProperties}>Manual trades</div>
+              {data.manualTrades.map((m) => <ManualCard key={m.symbol} m={m} days={days} privacy={privacy} />)}
+            </>
+          )}
+
           {/* bot legs */}
           <div style={M.section as React.CSSProperties}>Bot legs</div>
           {data.botLegs.length === 0
@@ -206,6 +216,42 @@ function PosTag({ isBot }: { isBot: boolean }) {
       background: isBot ? 'rgba(47,128,199,0.18)' : 'rgba(212,160,23,0.20)',
       color: isBot ? '#4aa3e8' : '#d4a017',
     }}>{isBot ? 'BOT' : 'MANUAL'}</span>
+  );
+}
+
+// One hand-traded symbol: header (symbol + live side or "flat" + realized over
+// range), then the live open row (entry/mark/uPnL) and SL/TP when held.
+function ManualCard({ m, days, privacy }: { m: ManualSymbolStats; days: number; privacy: boolean }) {
+  const p = m.open;
+  const short = p != null && p.positionAmt < 0;
+  return (
+    <div style={{ ...M.card, marginBottom: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ fontWeight: 700 }}>
+          {m.symbol}{' '}
+          <span style={{ color: p ? (short ? DOWN : UP) : MUTED, fontSize: 11 }}>
+            {p ? `${short ? 'SHORT' : 'LONG'} ${p.leverage}×` : 'flat'}
+          </span>
+        </div>
+        <div style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>
+          <span style={{ color: MUTED }}>realized {days}d </span>
+          <span style={{ color: sc(m.realizedPnlUsd), fontWeight: 700 }}>{usd(m.realizedPnlUsd, privacy)}</span>
+        </div>
+      </div>
+      {p && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 4 }}>
+          <div style={{ fontSize: 11, color: MUTED }}>entry {usd(p.entryPrice)} · mark {usd(p.markPrice)}</div>
+          <div style={{ fontFamily: 'var(--mono)', fontWeight: 700, color: sc(p.unrealizedPnlUsd) }}>{usd(p.unrealizedPnlUsd, privacy)}</div>
+        </div>
+      )}
+      {p && (p.slPriceUsd != null || p.tpPriceUsd != null) && !privacy && (
+        <div style={{ fontSize: 11, marginTop: 4, fontFamily: 'var(--mono)' }}>
+          <span style={{ color: p.slPriceUsd != null ? DOWN : MUTED }}>SL {p.slPriceUsd != null ? usd(p.slPriceUsd) : '—'}</span>
+          <span style={{ color: MUTED }}> · </span>
+          <span style={{ color: p.tpPriceUsd != null ? UP : MUTED }}>TP {p.tpPriceUsd != null ? usd(p.tpPriceUsd) : '—'}</span>
+        </div>
+      )}
+    </div>
   );
 }
 

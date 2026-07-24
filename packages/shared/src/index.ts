@@ -374,6 +374,26 @@ export interface FuturesBotLegStats {
   openExit: FuturesExitPlan | null;
 }
 
+/** Per-symbol rollup of MANUAL (non-bot) futures activity on the account — the
+ * hand-traded alt positions that share the account with the BTC bot. Realized /
+ * funding / fees come from the income ledger over the loaded window; `open` is
+ * the live position (side/entry/mark/uPnL/SL/TP) when the symbol is currently
+ * held, null when flat. NOTE: `realizedEvents` counts REALIZED_PNL ledger rows
+ * (partial fills inflate it) — it is NOT a clean round-trip trade count, and
+ * there is deliberately NO win-rate here: manual trades leave no entry/exit
+ * events to pair (unlike the bot legs), so a trade-level win rate would be
+ * fabricated. */
+export interface ManualSymbolStats {
+  symbol: string;
+  realizedPnlUsd: number;         // Σ REALIZED_PNL on this symbol (window)
+  fundingNetUsd: number;          // Σ funding, signed (+ received, − paid)
+  commissionUsd: number;          // commission paid, positive
+  netUsd: number;                 // realized + fundingNet − commission
+  realizedEvents: number;         // # of REALIZED_PNL rows (≈ closes; not clean trades)
+  lastActivityTs: number | null;  // ms of most recent income row, null if none
+  open: FuturesPosition | null;   // live open position, null when flat
+}
+
 export interface FuturesReconciliation {
   futuresWalletUsd: number | null;
   botEquityTotalUsd: number | null;
@@ -390,6 +410,7 @@ export interface FuturesAnalytics {
   equityCurve: FuturesEquityPoint[];   // from futures_account_snapshot
   incomeByDay: FuturesIncomeBucket[];  // realized / funding / commission per day
   positions: FuturesPosition[];        // current open futures positions
+  manualTrades: ManualSymbolStats[];   // per-symbol MANUAL (non-bot) activity + live open status
   // ── Bot side (always available from bot_events) ──
   botLegs: FuturesBotLegStats[];
   botTrades: FuturesBotTrade[];

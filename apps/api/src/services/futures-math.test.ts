@@ -4,11 +4,12 @@ import {
   summarizeIncome,
   pairBotTrades,
   deriveLegStats,
+  deriveManualStats,
   reconcileEquity,
   type IncomeRow,
   type BotEventLite,
 } from './futures-math.js';
-import { splitRealizedBySymbol, isBotSymbol } from '@consolidate/shared';
+import { splitRealizedBySymbol, isBotSymbol, type FuturesPosition } from '@consolidate/shared';
 
 const DAY = 24 * 60 * 60 * 1000;
 const T0 = Date.UTC(2026, 0, 1, 12, 0, 0); // 2026-01-01T12:00Z
@@ -118,6 +119,71 @@ describe('splitRealizedBySymbol', () => {
     expect(splitRealizedBySymbol({})).toEqual({
       botUsd: 0, manualUsd: 0, manualSymbols: [], hasManual: false,
     });
+  });
+});
+
+function mkPos(p: Partial<FuturesPosition> & { symbol: string }): FuturesPosition {
+  return {
+    positionSide: 'BOTH', positionAmt: 1, entryPrice: 100, markPrice: 100,
+    unrealizedPnlUsd: 0, leverage: 5, liquidationPrice: null,
+    notionalUsd: 100, updatedAt: 0, slPriceUsd: null, tpPriceUsd: null,
+    ...p,
+  };
+}
+
+describe('deriveManualStats', () => {
+  it('rolls up non-bot symbols; excludes BTC (bot) and symbol-less transfers', () => {
+    const income: IncomeRow[] = [
+      { incomeType: 'REALIZED_PNL', incomeUsd: 6.17, ts: T0, symbol: 'BTCUSDT' },      // bot → excluded
+      { incomeType: 'REALIZED_PNL', incomeUsd: -7.03, ts: T0, symbol: 'VELVETUSDT' },
+      { incomeType: 'REALIZED_PNL', incomeUsd: -1.73, ts: T0, symbol: 'TACUSDT' },
+      { incomeType: 'REALIZED_PNL', incomeUsd: -0.97, ts: T0 + DAY, symbol: 'TACUSDT' },
+      { incomeType: 'FUNDING_FEE', incomeUsd: -0.2, ts: T0, symbol: 'TACUSDT' },
+      { incomeType: 'COMMISSION', incomeUsd: -0.1, ts: T0, symbol: 'TACUSDT' },
+      { incomeType: 'TRANSFER', incomeUsd: 1000, ts: T0 },                             // no symbol → excluded
+    ];
+    const rows = deriveManualStats(income, []);
+    // most-recent activity first: TAC (T0+DAY) before VELVET (T0); BTC absent.
+    expect(rows.map((r) => r.symbol)).toEqual(['TACUSDT', 'VELVETUSDT']);
+    const tac = rows.find((r) => r.symbol === 'TACUSDT')!;
+    expect(tac.realizedPnlUsd).toBe(-2.7);   // -1.73 + -0.97
+    expect(tac.realizedEvents).toBe(2);
+    expect(tac.fundingNetUsd).toBe(-0.2);
+    expect(tac.commissionUsd).toBe(0.1);     // reported positive (paid)
+    expect(tac.netUsd).toBe(-3);             // -2.7 + -0.2 − 0.1
+    expect(tac.lastActivityTs).toBe(T0 + DAY);
+    expect(tac.open).toBeNull();
+  });
+
+  it('joins the live open position and sorts open symbols first', () => {
+    const income: IncomeRow[] = [
+      { incomeType: 'REALIZED_PNL', incomeUsd: -7.03, ts: T0 + 5 * DAY, symbol: 'VELVETUSDT' }, // most recent, but flat
+      { incomeType: 'REALIZED_PNL', incomeUsd: -1.0, ts: T0, symbol: 'TACUSDT' },
+    ];
+    const positions: FuturesPosition[] = [
+      mkPos({ symbol: 'TACUSDT', positionAmt: -50, entryPrice: 0.5, markPrice: 0.48, unrealizedPnlUsd: 1.0, slPriceUsd: 0.55, tpPriceUsd: 0.4 }),
+      mkPos({ symbol: 'BTCUSDT', positionAmt: 0.01 }), // bot symbol → not manual
+    ];
+    const rows = deriveManualStats(income, positions);
+    // TAC is open → sorts first even though VELVET has more recent income.
+    expect(rows.map((r) => r.symbol)).toEqual(['TACUSDT', 'VELVETUSDT']);
+    expect(rows[0].open).not.toBeNull();
+    expect(rows[0].open!.positionAmt).toBe(-50);
+    expect(rows[0].open!.slPriceUsd).toBe(0.55);
+    expect(rows.find((r) => r.symbol === 'BTCUSDT')).toBeUndefined();
+  });
+
+  it('a symbol with only an open position (no income) still appears', () => {
+    const rows = deriveManualStats([], [mkPos({ symbol: 'PEPEUSDT', positionAmt: 1000 })]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].symbol).toBe('PEPEUSDT');
+    expect(rows[0].realizedPnlUsd).toBe(0);
+    expect(rows[0].realizedEvents).toBe(0);
+    expect(rows[0].open).not.toBeNull();
+  });
+
+  it('empty inputs → empty', () => {
+    expect(deriveManualStats([], [])).toEqual([]);
   });
 });
 

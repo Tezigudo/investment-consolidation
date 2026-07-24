@@ -22,6 +22,7 @@ import type {
   FuturesIncomeBucket,
   FuturesBotTrade,
   FuturesExitPlan,
+  ManualSymbolStats,
 } from '@consolidate/shared';
 import { splitRealizedBySymbol, isBotSymbol } from '@consolidate/shared';
 
@@ -236,6 +237,19 @@ export function Futures({ privacy }: Props) {
             </div>
           </Section>
 
+          {/* ── Manual trades (hand-traded, non-bot symbols) — the account-side
+                counterpart to Bot legs: per-symbol realized/funding/fees over the
+                range + live open status. Only rendered when hand trades exist. ── */}
+          {data.manualTrades.length > 0 && (() => {
+            const openCount = data.manualTrades.filter((m) => m.open != null).length;
+            const n = data.manualTrades.length;
+            return (
+              <Section title="Manual trades" sub={`hand-traded · ${n} symbol${n > 1 ? 's' : ''}${openCount ? ` · ${openCount} open` : ''}`}>
+                <div style={card}><ManualTable rows={data.manualTrades} days={days} privacy={privacy} /></div>
+              </Section>
+            );
+          })()}
+
           {/* ── Bot legs ── */}
           <Section title="Bot legs (snapback attribution)" sub="per-leg, from pushed entry/exit events">
             <div style={card}>
@@ -321,6 +335,45 @@ function PositionsTable({ positions, privacy }: { positions: FuturesPosition[]; 
               <td style={td}>{p.liquidationPrice ? usd(p.liquidationPrice) : '—'}</td>
               <td style={{ ...td, color: p.slPriceUsd != null ? DOWN : MUTED }}>{p.slPriceUsd != null ? usd(p.slPriceUsd) : '—'}</td>
               <td style={{ ...td, color: p.tpPriceUsd != null ? UP : MUTED }}>{p.tpPriceUsd != null ? usd(p.tpPriceUsd) : '—'}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+// Per-symbol MANUAL activity: live open status (when held) + realized outcome
+// over the range. No win-rate — manual trades leave no paired events (see
+// deriveManualStats); the Realized cell's tooltip carries funding/fees/net.
+function ManualTable({ rows, days, privacy }: { rows: ManualSymbolStats[]; days: number; privacy: boolean }) {
+  const dash = <span style={{ color: MUTED }}>—</span>;
+  return (
+    <table style={tbl}>
+      <thead><tr>{['Symbol', 'Status', 'Size', 'Entry', 'Mark', 'uPnL', `Realized (${days}d)`, 'SL / TP'].map((h) => <th key={h} style={th}>{h}</th>)}</tr></thead>
+      <tbody>
+        {rows.map((m) => {
+          const p = m.open;
+          const short = p != null && p.positionAmt < 0;
+          const netTip = `net ${usd(m.netUsd)} · funding ${usd(m.fundingNetUsd)} · fees ${usd(-m.commissionUsd)}${m.realizedEvents ? ` · ${m.realizedEvents} realized event${m.realizedEvents > 1 ? 's' : ''}` : ''}`;
+          return (
+            <tr key={m.symbol}>
+              <td style={td}><b>{m.symbol}</b></td>
+              <td style={{ ...td, color: p ? (short ? DOWN : UP) : MUTED }}>{p ? (short ? 'OPEN short' : 'OPEN long') : 'flat'}</td>
+              <td style={td}>{p ? (privacy ? '•••' : `${Math.abs(p.positionAmt)} (${usd(p.notionalUsd)})`) : dash}</td>
+              <td style={td}>{p ? usd(p.entryPrice) : dash}</td>
+              <td style={td}>{p ? usd(p.markPrice) : dash}</td>
+              <td style={{ ...td, color: p ? signColor(p.unrealizedPnlUsd) : MUTED }}>{p ? usd(p.unrealizedPnlUsd, privacy) : '—'}</td>
+              <td style={{ ...td, color: signColor(m.realizedPnlUsd) }} title={privacy ? undefined : netTip}>{usd(m.realizedPnlUsd, privacy)}</td>
+              <td style={td}>
+                {p
+                  ? <>
+                      <span style={{ color: p.slPriceUsd != null ? DOWN : MUTED }}>{p.slPriceUsd != null ? usd(p.slPriceUsd) : '—'}</span>
+                      <span style={{ color: MUTED }}> / </span>
+                      <span style={{ color: p.tpPriceUsd != null ? UP : MUTED }}>{p.tpPriceUsd != null ? usd(p.tpPriceUsd) : '—'}</span>
+                    </>
+                  : dash}
+              </td>
             </tr>
           );
         })}

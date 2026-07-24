@@ -28,6 +28,7 @@ import {
   summarizeIncome,
   pairBotTrades,
   deriveLegStats,
+  deriveManualStats,
   reconcileEquity,
   type BotEventLite,
   type IncomeRow,
@@ -297,6 +298,10 @@ export async function buildFuturesAnalytics(rangeDays: number): Promise<FuturesA
     tpPriceUsd: r.tp_price != null ? Number(r.tp_price) : null,
   }));
 
+  // Per-symbol MANUAL (non-bot) activity: realized/funding/fees from the income
+  // ledger joined to the live open positions. Account-side, like `positions`.
+  const manualTrades = deriveManualStats(incomeLite, positions);
+
   // ── Bot side (from bot_events; always available) ──
   const evRows = await pool.query<{
     source: string; kind: string; side: 'long' | 'short' | null;
@@ -373,6 +378,7 @@ export async function buildFuturesAnalytics(rangeDays: number): Promise<FuturesA
     equityCurve,
     incomeByDay: inc.byDay,
     positions,
+    manualTrades,
     botLegs,
     botTrades,
     botEquityCurve,

@@ -10,7 +10,10 @@ import type {
   FuturesBotLegStats,
   FuturesReconciliation,
   FuturesExitPlan,
+  FuturesPosition,
+  ManualSymbolStats,
 } from '@consolidate/shared';
+import { isBotSymbol, BOT_SYMBOLS } from '@consolidate/shared';
 
 /** UTC calendar day (YYYY-MM-DD) for a ms timestamp. */
 export function utcDay(ts: number): string {
@@ -115,6 +118,101 @@ export function summarizeIncome(rows: IncomeRow[]): IncomeSummary {
     netIncomeUsd: round2(realizedPnlUsd + fundingNetUsd - commissionUsd),
     byDay,
   };
+}
+
+// ── Manual (non-bot) per-symbol rollup ──────────────────────────────────────
+
+/**
+ * Roll up MANUAL futures activity — every non-bot symbol on the account — into
+ * one row per symbol, from the income ledger (realized / funding / fees over the
+ * window) joined to the current open positions (live side/entry/mark/uPnL/SL/TP).
+ *
+ * A symbol appears if it had ANY income in the window OR is currently open, so
+ * both closed hand-trades and live ones are covered. There is deliberately NO
+ * win-rate: manual trades leave no paired entry/exit events (unlike bot legs),
+ * so `realizedEvents` is the honest count of REALIZED_PNL ledger rows (partial
+ * fills inflate it) — not a clean trade count. Bot symbols are excluded here;
+ * they belong to the bot-legs attribution.
+ *
+ * Sort: open positions first, then most-recent activity, then symbol.
+ */
+export function deriveManualStats(
+  income: IncomeRow[],
+  positions: FuturesPosition[],
+  botSymbols: readonly string[] = BOT_SYMBOLS,
+): ManualSymbolStats[] {
+  interface Agg {
+    realized: number;
+    fundingNet: number;
+    commission: number; // accumulated paid as positive
+    realizedEvents: number;
+    lastTs: number | null;
+  }
+  const agg = new Map<string, Agg>();
+  const bucket = (sym: string): Agg => {
+    let a = agg.get(sym);
+    if (!a) {
+      a = { realized: 0, fundingNet: 0, commission: 0, realizedEvents: 0, lastTs: null };
+      agg.set(sym, a);
+    }
+    return a;
+  };
+
+  for (const r of income) {
+    const sym = r.symbol;
+    if (!sym || isBotSymbol(sym, botSymbols)) continue; // skip transfers + bot symbols
+    let touched = true;
+    const a = bucket(sym);
+    switch (r.incomeType) {
+      case 'REALIZED_PNL':
+        a.realized += r.incomeUsd;
+        a.realizedEvents += 1;
+        break;
+      case 'FUNDING_FEE':
+        a.fundingNet += r.incomeUsd;
+        break;
+      case 'COMMISSION':
+        a.commission += -r.incomeUsd; // income is negative → paid is positive
+        break;
+      default:
+        touched = false; // non-trading row: don't advance the activity clock
+        break;
+    }
+    if (touched && (a.lastTs == null || r.ts > a.lastTs)) a.lastTs = r.ts;
+  }
+
+  // Index the currently-open non-bot positions by symbol.
+  const openBySym = new Map<string, FuturesPosition>();
+  for (const p of positions) {
+    if (!isBotSymbol(p.symbol, botSymbols) && p.positionAmt !== 0) openBySym.set(p.symbol, p);
+  }
+
+  const symbols = new Set<string>([...agg.keys(), ...openBySym.keys()]);
+  const out: ManualSymbolStats[] = [];
+  for (const symbol of symbols) {
+    const a = agg.get(symbol);
+    const realized = a?.realized ?? 0;
+    const fundingNet = a?.fundingNet ?? 0;
+    const commission = a?.commission ?? 0;
+    out.push({
+      symbol,
+      realizedPnlUsd: round2(realized),
+      fundingNetUsd: round2(fundingNet),
+      commissionUsd: round2(commission),
+      netUsd: round2(realized + fundingNet - commission),
+      realizedEvents: a?.realizedEvents ?? 0,
+      lastActivityTs: a?.lastTs ?? null,
+      open: openBySym.get(symbol) ?? null,
+    });
+  }
+
+  return out.sort((x, y) => {
+    if ((x.open != null) !== (y.open != null)) return x.open != null ? -1 : 1;
+    const tx = x.lastActivityTs ?? 0;
+    const ty = y.lastActivityTs ?? 0;
+    if (tx !== ty) return ty - tx;
+    return x.symbol.localeCompare(y.symbol);
+  });
 }
 
 // ── Bot-event trade pairing ────────────────────────────────────────────────

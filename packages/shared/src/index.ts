@@ -277,10 +277,18 @@ export interface FuturesAccountSummary {
 }
 
 /** The symbol(s) the trading bot trades. Realized PnL on these is "bot"; any
- * other symbol on the account is manual/discretionary. The relay reads ONE
- * account and both bot legs are BTC-only, so non-bot symbols on that account
- * are hand trades. Keep in sync with the bot's traded symbol. */
-export const BOT_SYMBOLS = ['BTCUSDT'] as const;
+ * other symbol on the account is manual/discretionary. Keep in sync with the
+ * bots' traded symbols.
+ *
+ * NOTE (2026-07-25): the old comment here claimed "both bot legs are BTC-only,
+ * so non-bot symbols on that account are hand trades". That is no longer true —
+ * the sol_supertrend leg trades SOLUSDT. It runs in its OWN sub-account, which
+ * the relay does not currently read, so no SOLUSDT rows reach this code today;
+ * SOLUSDT is listed anyway so that the day the relay does see that account, a
+ * bot-traded alt is never mislabelled a hand trade. Adding a symbol here is
+ * safe in the other direction too: it only excludes rows from the "manual"
+ * bucket, and there are no SOLUSDT rows in the relay's account to exclude. */
+export const BOT_SYMBOLS = ['BTCUSDT', 'SOLUSDT'] as const;
 
 /** True if a symbol is one the trading bot trades (→ a bot position/trade);
  * false = a manual/discretionary trade on the same account. Single source of

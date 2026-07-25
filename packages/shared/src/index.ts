@@ -351,7 +351,7 @@ export interface FuturesExitPlan {
 
 // Per-leg attribution from bot_events: pair each entry with its next exit.
 export interface FuturesBotTrade {
-  source: string;              // bot source (leg), e.g. 'snapback-btc-cnh-short'
+  source: string;              // bot source (leg), e.g. 'snapback-sol-supertrend'
   strategy: string | null;
   side: 'long' | 'short' | null;
   entryTs: number;

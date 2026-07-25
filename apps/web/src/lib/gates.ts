@@ -24,7 +24,42 @@ export const GATE_LABELS: Record<string, string> = {
   pattern_admitted_this_bar: 'Pattern admitted (DT or ICnH)',
   tp_slot_below_entry: 'EMA(100) below close (TP slot)',
   icnh_lookback_ema_xd: 'EMA24 cross-down within lookback',
+  // supertrend (SOL, native 4h). Entry fires only on the FLIP bar, so both
+  // gates read ✗ whenever the trend simply continues — that is the normal
+  // resting state, not a stall.
+  st_flip_up: 'Supertrend flipped UP this bar',
+  st_flip_down: 'Supertrend flipped DOWN this bar',
+  // …and the value/threshold keys, which shared the same raw-key fallback.
+  st_dir: 'Supertrend direction',
+  st_dir_prev: 'Direction, previous bar',
+  st_line: 'Supertrend band (flip level)',
+  dist_to_flip_pct: 'Distance to flip',
+  atr_pct: 'ATR as % of price',
+  bars_since_flip: 'Bars since last flip',
+  would_sl_price: 'SL if it fired now',
+  would_tp_price: 'TP if it fired now',
+  st_period: 'Supertrend period',
+  st_multiplier: 'Supertrend multiplier',
+  sl_atr: 'Stop (× ATR)',
+  tp_atr: 'Target (× ATR)',
+  shorts_enabled: 'Shorts enabled',
 };
+
+// Value keys that are PRICES. Needed because the generic formatter only adds a
+// `$` above 1000 (fine for BTC, wrong for SOL at ~$74 — it fell through to
+// toFixed(4) and rendered "74.0900").
+const PRICE_KEYS = new Set([
+  'close', 'st_line', 'would_sl_price', 'would_tp_price',
+  'upper_80bar', 'lower_80bar',
+]);
+// Value keys already expressed in percent (do NOT multiply by 100 again).
+// Split by whether the SIGN carries information: distance-to-flip is signed
+// (+ = band above price, − = below), whereas ATR is always positive so a
+// leading "+" would just be noise.
+const SIGNED_PCT_KEYS = new Set(['dist_to_flip_pct']);
+const PCT_KEYS = new Set(['atr_pct']);
+// Value keys that are counts — no decimals.
+const INT_KEYS = new Set(['bars_since_flip', 'st_period']);
 
 export function gateLabel(key: string): string {
   return GATE_LABELS[key] ?? key;
@@ -49,14 +84,32 @@ export function fmtGateValue(k: string, v: unknown): string {
       return s.length > 60 ? s.slice(0, 57) + '…' : s;
     } catch { return String(v); }
   }
+  if (typeof v === 'boolean') return v ? 'yes' : 'no';
   if (typeof v !== 'number' || Number.isNaN(v)) return String(v);
+  // Supertrend direction is a ±1 flag, not a measurement — "-1.0000" told the
+  // reader nothing. Spell it out.
+  if (k === 'st_dir' || k === 'st_dir_prev') {
+    if (v > 0) return '↑ up (+1)';
+    if (v < 0) return '↓ down (−1)';
+    return 'flat (0)';
+  }
   if (k === 'rsi') return v.toFixed(1);
   if (k === 'vol_ratio') return `${v.toFixed(2)}×`;
   if (k === 'funding_rate') return `${(v * 100).toFixed(4)}%`;
   if (k === 'slope') return `${(v * 100).toFixed(2)}%`;
+  if (SIGNED_PCT_KEYS.has(k)) return `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
+  if (PCT_KEYS.has(k)) return `${v.toFixed(2)}%`;
+  if (INT_KEYS.has(k)) return v.toFixed(0);
   if (k === 'atr') return v.toFixed(2);
+  if (PRICE_KEYS.has(k)) {
+    // 2dp under $1000 (SOL ~$74.14), no cents above it (BTC ~$64,098).
+    return Math.abs(v) >= 1000
+      ? `$${v.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+      : `$${v.toFixed(2)}`;
+  }
   if (Math.abs(v) >= 1000) {
     return `$${v.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
   }
-  return v.toFixed(4);
+  // Trailing zeros on a 4dp default read as false precision; trim them.
+  return String(Number(v.toFixed(4)));
 }

@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AreaChart, Donut, WinLossBar } from '../../components/charts';
 import { api, type PortfolioHistoryResponse } from '../../api/client';
 import { fmtMoney, fmtPct, fmtTHB, fmtUSD } from '../../lib/format';
 import { BOT_SOURCES } from '../../lib/bots';
-import { gateLabel } from '../../lib/gates';
+import { gateLabel, gateLabelShort, fmtGateValue, pickMobileValues } from '../../lib/gates';
 import { M } from './styles';
 import type {
   BotEventRow,
@@ -1221,6 +1221,27 @@ function BotStatusMobile({ source = 'snapback-btc' }: { source?: string }) {
                       }}>· FIRED {fired.toUpperCase()}</span>
                     : null}
                 </div>
+                {/* Current readings. The gate checklist says WHETHER something
+                    fired; this says WHAT the numbers are — notably the previous
+                    vs current Supertrend direction, which is how you see that
+                    the trend simply continued rather than flipped. Curated +
+                    capped in lib/gates so a strategy with many values can't
+                    make this card unscrollable. */}
+                {pickMobileValues(g.values).length > 0 && (
+                  <div style={{
+                    display: 'grid', gridTemplateColumns: 'auto 1fr auto 1fr',
+                    gap: '2px 6px', alignItems: 'baseline',
+                    fontFamily: 'var(--mono)', fontSize: 10.5,
+                    marginBottom: 8,
+                  }}>
+                    {pickMobileValues(g.values).map(([k, v]) => (
+                      <Fragment key={k}>
+                        <span style={{ color: 'var(--muted)' }}>{gateLabelShort(k)}</span>
+                        <span style={{ color: 'var(--text)' }}>{fmtGateValue(k, v)}</span>
+                      </Fragment>
+                    ))}
+                  </div>
+                )}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   <div>
                     <div style={{ color: 'var(--muted)', fontSize: 9.5, marginBottom: 3 }}>LONG</div>

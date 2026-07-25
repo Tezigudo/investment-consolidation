@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fmtGateValue, gateLabel } from './gates';
+import { fmtGateValue, gateLabel, gateLabelShort, pickMobileValues, MOBILE_VALUE_KEYS } from './gates';
 
 describe('supertrend gate rendering', () => {
   it('renders SOL-scale prices as dollars, not toFixed(4)', () => {
@@ -34,5 +34,33 @@ describe('supertrend gate rendering', () => {
     expect(gateLabel('st_flip_up')).toBe('Supertrend flipped UP this bar');
     expect(gateLabel('st_dir_prev')).toBe('Direction, previous bar');
     expect(gateLabel('totally_unknown_key')).toBe('totally_unknown_key');
+  });
+});
+
+describe('mobile value picker', () => {
+  it('puts prev BEFORE now so "prev ↓ / now ↓" reads left-to-right', () => {
+    const picked = pickMobileValues({ st_dir: -1, st_dir_prev: -1, close: 74.14 });
+    expect(picked.map(([k]) => k).slice(0, 2)).toEqual(['st_dir_prev', 'st_dir']);
+  });
+  it('skips absent and null keys', () => {
+    const picked = pickMobileValues({ st_dir: -1, st_line: null, rsi: undefined });
+    expect(picked.map(([k]) => k)).toEqual(['st_dir']);
+  });
+  it('caps rows so a big values payload cannot blow up the phone card', () => {
+    const many = Object.fromEntries(MOBILE_VALUE_KEYS.map((k) => [k, 1]));
+    expect(pickMobileValues(many).length).toBe(6);
+    expect(pickMobileValues(many, 3).length).toBe(3);
+  });
+  it('is empty for a missing values map', () => {
+    expect(pickMobileValues(null)).toEqual([]);
+    expect(pickMobileValues(undefined)).toEqual([]);
+  });
+  it('short labels fit a phone row', () => {
+    expect(gateLabelShort('st_dir_prev')).toBe('prev');
+    expect(gateLabelShort('st_dir')).toBe('now');
+    expect(gateLabelShort('dist_to_flip_pct')).toBe('to flip');
+    // falls back to the long label, then the raw key
+    expect(gateLabelShort('st_flip_up')).toBe('Supertrend flipped UP this bar');
+    expect(gateLabelShort('nope_unknown')).toBe('nope_unknown');
   });
 });

@@ -65,6 +65,61 @@ export function gateLabel(key: string): string {
   return GATE_LABELS[key] ?? key;
 }
 
+// Short labels for the phone. The desktop card has room for "Supertrend band
+// (flip level)"; a 375px-wide PWA row does not.
+const GATE_LABELS_SHORT: Record<string, string> = {
+  st_dir_prev: 'prev',
+  st_dir: 'now',
+  st_line: 'flip at',
+  dist_to_flip_pct: 'to flip',
+  bars_since_flip: 'bars held',
+  atr_pct: 'ATR',
+  would_sl_price: 'SL',
+  would_tp_price: 'TP',
+  upper_80bar: '80b high',
+  lower_80bar: '80b low',
+  trend_ema: 'EMA200',
+  vol_ratio: 'vol',
+  funding_rate: 'funding',
+};
+
+export function gateLabelShort(key: string): string {
+  return GATE_LABELS_SHORT[key] ?? GATE_LABELS[key] ?? key;
+}
+
+// Which `values` entries the mobile/PWA card shows, in priority order. The
+// desktop card renders every value; a phone cannot, so this is a curated
+// shortlist — only keys actually present in the payload are rendered, so one
+// list serves every strategy and a new leg degrades gracefully instead of
+// blowing up the layout.
+//
+// `st_dir_prev` is listed BEFORE `st_dir` on purpose: reading "prev ↓ / now ↓"
+// left-to-right is how you see at a glance that nothing flipped, which is the
+// whole question the supertrend card has to answer.
+export const MOBILE_VALUE_KEYS: readonly string[] = [
+  'st_dir_prev', 'st_dir', 'dist_to_flip_pct', 'st_line', 'bars_since_flip',
+  'rsi', 'close', 'upper_80bar', 'lower_80bar', 'slope',
+  'atr_pct', 'vol_ratio', 'funding_rate',
+];
+
+/** Pick the mobile-visible subset of a GateStatus `values` map, in priority
+ *  order, skipping absent/null keys. `max` caps the rows so a strategy with a
+ *  large values payload can't push the phone card arbitrarily tall. */
+export function pickMobileValues(
+  values: Record<string, unknown> | null | undefined,
+  max = 6,
+): [string, unknown][] {
+  if (!values) return [];
+  const out: [string, unknown][] = [];
+  for (const k of MOBILE_VALUE_KEYS) {
+    if (out.length >= max) break;
+    const v = values[k];
+    if (v === undefined || v === null) continue;
+    out.push([k, v]);
+  }
+  return out;
+}
+
 // Formats a GateStatus value field for display. Per-key formatting because
 // rsi is a 0-100 scalar, vol_ratio is a multiple, funding/slope are
 // fractions that read better as percentages, and prices are dollar amounts.

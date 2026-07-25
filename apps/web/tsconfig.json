@@ -19,5 +19,17 @@
     "allowImportingTsExtensions": false,
     "verbatimModuleSyntax": true
   },
-  "include": ["src/**/*", "vite.config.ts"]
+  "include": ["src/**/*", "vite.config.ts"],
+  // Test files are excluded from the PRODUCTION build. `bun run build` runs
+  // `tsc -p tsconfig.json && vite build`, and Cloudflare Pages builds with root
+  // directory `apps/web`, so only this workspace's dependencies are installed —
+  // `vitest` (a root devDependency) is not resolvable there. A colocated
+  // `*.test.ts` importing it typechecks fine locally, where the monorepo's
+  // node_modules are hoisted, but fails the Pages build with TS2307. That is
+  // exactly what broke deployment 5534a85.
+  //
+  // Vitest finds tests via its own default glob, not via tsconfig `include`, so
+  // excluding them here costs nothing: they still run, and `bun run typecheck`
+  // for the app no longer depends on test-only deps being present.
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

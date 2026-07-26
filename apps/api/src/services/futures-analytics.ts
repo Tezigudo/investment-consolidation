@@ -135,6 +135,7 @@ export interface IngestPosition {
   unrealizedPnlUsd: number;
   liquidationPrice: number | null;
   leverage: number;
+  marginUsd?: number | null; // isolatedWallet (isolated) / positionInitialMargin (cross)
   slPrice?: number | null;   // resting reduce-only STOP_MARKET stopPrice, if any
   tpPrice?: number | null;   // resting reduce-only TAKE_PROFIT_MARKET stopPrice, if any
 }
@@ -187,16 +188,16 @@ export async function ingestFuturesPositions(
       // the last-known value so a transient blip never erases a live bracket.
       await client.query(
         `INSERT INTO futures_positions
-           (symbol, position_side, position_amt, entry_price, mark_price, unrealized_usd, liq_price, leverage, updated_at, sl_price, tp_price)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+           (symbol, position_side, position_amt, entry_price, mark_price, unrealized_usd, liq_price, leverage, updated_at, sl_price, tp_price, margin_usd)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$13)
          ON CONFLICT (symbol) DO UPDATE SET
            position_side=$2, position_amt=$3, entry_price=$4, mark_price=$5,
-           unrealized_usd=$6, liq_price=$7, leverage=$8, updated_at=$9,
+           unrealized_usd=$6, liq_price=$7, leverage=$8, updated_at=$9, margin_usd=$13,
            sl_price = CASE WHEN $12::boolean THEN $10 ELSE COALESCE($10, futures_positions.sl_price) END,
            tp_price = CASE WHEN $12::boolean THEN $11 ELSE COALESCE($11, futures_positions.tp_price) END`,
         [p.symbol, p.positionSide, p.positionAmt, p.entryPrice, p.markPrice,
          p.unrealizedPnlUsd, p.liquidationPrice, p.leverage, now,
-         p.slPrice ?? null, p.tpPrice ?? null, bracketsKnown],
+         p.slPrice ?? null, p.tpPrice ?? null, bracketsKnown, p.marginUsd ?? null],
       );
     }
     if (open.length) {
@@ -247,7 +248,7 @@ export async function buildFuturesAnalytics(rangeDays: number): Promise<FuturesA
       'SELECT income_type, income_usd, ts::text, symbol FROM futures_income WHERE ts >= $1 ORDER BY ts ASC',
       [since],
     ),
-    pool.query<{ symbol: string; position_side: string; position_amt: number; entry_price: number; mark_price: number; unrealized_usd: number; liq_price: number | null; leverage: number; updated_at: string; sl_price: number | null; tp_price: number | null }>(
+    pool.query<{ symbol: string; position_side: string; position_amt: number; entry_price: number; mark_price: number; unrealized_usd: number; liq_price: number | null; leverage: number; updated_at: string; sl_price: number | null; tp_price: number | null; margin_usd: number | null }>(
       'SELECT * FROM futures_positions ORDER BY ABS(position_amt * mark_price) DESC',
     ),
   ]);
@@ -291,6 +292,7 @@ export async function buildFuturesAnalytics(rangeDays: number): Promise<FuturesA
     markPrice: Number(r.mark_price),
     unrealizedPnlUsd: Number(r.unrealized_usd),
     leverage: Number(r.leverage),
+    marginUsd: r.margin_usd != null ? Number(r.margin_usd) : null,
     liquidationPrice: r.liq_price != null ? Number(r.liq_price) : null,
     notionalUsd: Math.abs(Number(r.position_amt)) * Number(r.mark_price),
     updatedAt: Number(r.updated_at),

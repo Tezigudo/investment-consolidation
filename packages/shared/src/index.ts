@@ -231,7 +231,8 @@ export interface FuturesPosition {
   entryPrice: number;
   markPrice: number;
   unrealizedPnlUsd: number;
-  leverage: number;
+  leverage: number;            // configured leverage (symbolConfig); 0 = unknown
+  marginUsd: number | null;    // margin tied up: isolatedWallet / positionInitialMargin
   liquidationPrice: number | null;
   notionalUsd: number;         // |positionAmt| × markPrice
   updatedAt: number;           // ms

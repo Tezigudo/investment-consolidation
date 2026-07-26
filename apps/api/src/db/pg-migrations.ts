@@ -509,6 +509,18 @@ export const PG_MIGRATIONS: Migration[] = [
       ALTER TABLE futures_positions ADD COLUMN IF NOT EXISTS tp_price DOUBLE PRECISION;
     `,
   },
+  {
+    version: 19,
+    name: 'futures_positions_margin_usd',
+    up: `
+      -- Margin actually tied up by each open position (isolatedWallet when
+      -- isolated, positionInitialMargin in cross mode). Pushed by the droplet
+      -- relay alongside the leverage fix: Binance's /fapi/v3 position payload
+      -- dropped the leverage field, so the relay now reads /fapi/v1/symbolConfig
+      -- and sends real leverage + margin. Nullable: old relays don't push it.
+      ALTER TABLE futures_positions ADD COLUMN IF NOT EXISTS margin_usd DOUBLE PRECISION;
+    `,
+  },
 ];
 
 export async function runPgMigrations(pool: Pool) {

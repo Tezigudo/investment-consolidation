@@ -319,7 +319,7 @@ function PosTag({ isBot }: { isBot: boolean }) {
 function PositionsTable({ positions, privacy }: { positions: FuturesPosition[]; privacy: boolean }) {
   return (
     <table style={tbl}>
-      <thead><tr>{['Symbol', 'Side', 'Size', 'Entry', 'Mark', 'uPnL', 'Lev', 'Liq.', 'SL', 'TP'].map((h) => <th key={h} style={th}>{h}</th>)}</tr></thead>
+      <thead><tr>{['Symbol', 'Side', 'Size', 'Entry', 'Mark', 'uPnL', 'Lev', 'Margin', 'Liq.', 'SL', 'TP'].map((h) => <th key={h} style={th}>{h}</th>)}</tr></thead>
       <tbody>
         {positions.map((p) => {
           const short = p.positionAmt < 0;
@@ -331,7 +331,8 @@ function PositionsTable({ positions, privacy }: { positions: FuturesPosition[]; 
               <td style={td}>{usd(p.entryPrice)}</td>
               <td style={td}>{usd(p.markPrice)}</td>
               <td style={{ ...td, color: signColor(p.unrealizedPnlUsd) }}>{usd(p.unrealizedPnlUsd, privacy)}</td>
-              <td style={td}>{p.leverage}×</td>
+              <td style={td}>{p.leverage > 0 ? `${p.leverage}×` : '—'}</td>
+              <td style={td}>{p.marginUsd != null ? usd(p.marginUsd, privacy) : '—'}</td>
               <td style={td}>{p.liquidationPrice ? usd(p.liquidationPrice) : '—'}</td>
               <td style={{ ...td, color: p.slPriceUsd != null ? DOWN : MUTED }}>{p.slPriceUsd != null ? usd(p.slPriceUsd) : '—'}</td>
               <td style={{ ...td, color: p.tpPriceUsd != null ? UP : MUTED }}>{p.tpPriceUsd != null ? usd(p.tpPriceUsd) : '—'}</td>

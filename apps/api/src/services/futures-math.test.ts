@@ -125,7 +125,7 @@ describe('splitRealizedBySymbol', () => {
 function mkPos(p: Partial<FuturesPosition> & { symbol: string }): FuturesPosition {
   return {
     positionSide: 'BOTH', positionAmt: 1, entryPrice: 100, markPrice: 100,
-    unrealizedPnlUsd: 0, leverage: 5, liquidationPrice: null,
+    unrealizedPnlUsd: 0, leverage: 5, marginUsd: null, liquidationPrice: null,
     notionalUsd: 100, updatedAt: 0, slPriceUsd: null, tpPriceUsd: null,
     ...p,
   };

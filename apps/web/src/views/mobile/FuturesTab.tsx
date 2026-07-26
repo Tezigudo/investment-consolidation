@@ -147,8 +147,8 @@ export function FuturesTab({ privacy }: { privacy: boolean }) {
               <div key={p.symbol} style={{ ...M.card, marginBottom: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
-                    <div style={{ fontWeight: 700 }}>{p.symbol} <PosTag isBot={isBot} /> <span style={{ color: p.positionAmt < 0 ? DOWN : UP, fontSize: 11 }}>{p.positionAmt < 0 ? 'SHORT' : 'LONG'} {p.leverage}×</span></div>
-                    <div style={{ fontSize: 11, color: MUTED }}>entry {usd(p.entryPrice)} · mark {usd(p.markPrice)}</div>
+                    <div style={{ fontWeight: 700 }}>{p.symbol} <PosTag isBot={isBot} /> <span style={{ color: p.positionAmt < 0 ? DOWN : UP, fontSize: 11 }}>{p.positionAmt < 0 ? 'SHORT' : 'LONG'}{p.leverage > 0 ? ` ${p.leverage}×` : ''}</span></div>
+                    <div style={{ fontSize: 11, color: MUTED }}>entry {usd(p.entryPrice)} · mark {usd(p.markPrice)}{p.marginUsd != null ? <> · margin {usd(p.marginUsd, privacy)}</> : null}</div>
                   </div>
                   <div style={{ fontFamily: 'var(--mono)', fontWeight: 700, color: sc(p.unrealizedPnlUsd) }}>{usd(p.unrealizedPnlUsd, privacy)}</div>
                 </div>
@@ -230,7 +230,7 @@ function ManualCard({ m, days, privacy }: { m: ManualSymbolStats; days: number; 
         <div style={{ fontWeight: 700 }}>
           {m.symbol}{' '}
           <span style={{ color: p ? (short ? DOWN : UP) : MUTED, fontSize: 11 }}>
-            {p ? `${short ? 'SHORT' : 'LONG'} ${p.leverage}×` : 'flat'}
+            {p ? `${short ? 'SHORT' : 'LONG'}${p.leverage > 0 ? ` ${p.leverage}×` : ''}` : 'flat'}
           </span>
         </div>
         <div style={{ fontFamily: 'var(--mono)', fontSize: 12 }}>

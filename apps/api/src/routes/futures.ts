@@ -45,6 +45,7 @@ const PositionsBody = z.object({
       unrealizedPnlUsd: fin(),
       liquidationPrice: fin().positive().nullable().default(null),
       leverage: fin().nonnegative(),
+      marginUsd: fin().positive().nullable().default(null),
       slPrice: fin().positive().nullable().default(null),
       tpPrice: fin().positive().nullable().default(null),
     }),

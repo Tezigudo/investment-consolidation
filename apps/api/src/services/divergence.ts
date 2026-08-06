@@ -33,7 +33,14 @@ export type Candle = {
   close: number;
 };
 
-export type DivergenceHit = {
+/**
+ * A raw detector output. Deliberately NOT the shared `DivergenceHit`, which
+ * additionally carries `barsAgo` — that is a function of where the newest
+ * candle sits and is computed by the route, not by the detector. Keeping the
+ * names distinct stops the two shapes being "unified" into one type that would
+ * then have to lie about barsAgo here.
+ */
+export type DivergenceSignal = {
   kind: 'bull' | 'bear';
   /** ms epoch of the bar the label prints on (pivot + LB_R) */
   at: number;
@@ -82,10 +89,10 @@ function pivots(series: number[], low: boolean): boolean[] {
   return out;
 }
 
-export function findDivergences(candles: Candle[]): DivergenceHit[] {
+export function findDivergences(candles: Candle[]): DivergenceSignal[] {
   const closes = candles.map((c) => c.close);
   const osc = rsi(closes, 14);
-  const hits: DivergenceHit[] = [];
+  const hits: DivergenceSignal[] = [];
 
   for (const isLow of [true, false]) {
     const piv = pivots(osc, isLow);

@@ -75,13 +75,10 @@ export function DivergenceCard() {
   });
 
   return (
-    <section
-      style={{
-        border: '1px solid var(--border, #30363d)',
-        borderRadius: 8,
-        padding: '0.75rem 1rem',
-      }}
-    >
+    // Same .widget shell + padding as BotStatusCard so this reads as part of
+    // the dashboard rather than a bolt-on. marginBottom is supplied by the
+    // wrapper in Dashboard.tsx.
+    <section className="widget" style={{ padding: '22px 24px' }}>
       <header
         style={{
           display: 'flex',

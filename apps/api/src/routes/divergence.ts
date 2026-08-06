@@ -10,6 +10,7 @@
 // cached for CACHE_MS. Weekly candles move once a week; a stale minute is fine.
 
 import type { FastifyInstance } from 'fastify';
+import type { DivergenceFrame, DivergenceState } from '@consolidate/shared';
 import { binancePublicGet } from '../services/binance-http.js';
 import { findDivergences, rsi, type Candle } from '../services/divergence.js';
 
@@ -20,11 +21,18 @@ const FRAMES = [
 ] as const;
 
 const CACHE_MS = 5 * 60_000;
-let cache: { at: number; payload: unknown } | null = null;
+// Typed against the shared contract, not `unknown`: the handler returns this
+// straight to callers, so an untyped payload would let the route and the
+// DivergenceState interface drift apart without tsc noticing.
+let cache: { at: number; payload: DivergenceState } | null = null;
 
 type RawKline = [number, string, string, string, string, string, ...unknown[]];
 
-async function frameState(interval: string, limit: number, tf: string) {
+async function frameState(
+  interval: string,
+  limit: number,
+  tf: string,
+): Promise<DivergenceFrame> {
   const rows = await binancePublicGet<RawKline[]>('/api/v3/klines', {
     symbol: 'BTCUSDT',
     interval,
@@ -77,7 +85,7 @@ export async function divergenceRoutes(app: FastifyInstance) {
   app.get('/divergence', async () => {
     if (cache && Date.now() - cache.at < CACHE_MS) return cache.payload;
 
-    const frames: Awaited<ReturnType<typeof frameState>>[] = [];
+    const frames: DivergenceFrame[] = [];
     for (const f of FRAMES) {
       try {
         frames.push(await frameState(f.interval, f.limit, f.tf));
@@ -91,7 +99,7 @@ export async function divergenceRoutes(app: FastifyInstance) {
       }
     }
 
-    const payload = { asOf: Date.now(), symbol: 'BTCUSDT', frames };
+    const payload: DivergenceState = { asOf: Date.now(), symbol: 'BTCUSDT', frames };
     cache = { at: Date.now(), payload };
     return payload;
   });

@@ -41,18 +41,27 @@ async function frameState(interval: string, limit: number, tf: string) {
   const hits = findDivergences(candles);
   const closes = candles.map((c) => c.close);
   const r = rsi(closes, 14);
+  // Deliberately the FORMING bar's RSI, unlike barsAgo below which uses the last
+  // CLOSED bar. A dashboard wants the live reading; "bars since" wants a settled
+  // reference. The two differ on purpose — do not "make them consistent".
   const lastRsi = r[r.length - 1];
 
   // The final candle is still forming; the last CLOSED bar is the honest
   // reference for "bars since", matching how the bot evaluates.
   const lastClosedIdx = candles.length - 2;
   const last = hits.length ? hits[hits.length - 1] : null;
-  const barsAgo =
-    last === null
-      ? null
-      : Math.max(0, candles.findIndex((c) => c.openTime === last.at) >= 0
-          ? lastClosedIdx - candles.findIndex((c) => c.openTime === last.at)
-          : 0);
+
+  // Resolve the signal's bar index ONCE, and let a miss surface as null.
+  // Returning 0 on a miss would render as "this bar" — i.e. claim a divergence
+  // just fired when we simply could not locate it.
+  let barsAgo: number | null = null;
+  if (last !== null) {
+    const idx = candles.findIndex((c) => c.openTime === last.at);
+    // A signal can legitimately land on the still-forming candle (it fires at
+    // pivot+LB_R, and the last pivot sits LB_R bars back), giving idx one past
+    // lastClosedIdx. Clamp that to 0 = "this bar".
+    if (idx >= 0) barsAgo = Math.max(0, lastClosedIdx - idx);
+  }
 
   return {
     tf,
@@ -68,7 +77,7 @@ export async function divergenceRoutes(app: FastifyInstance) {
   app.get('/divergence', async () => {
     if (cache && Date.now() - cache.at < CACHE_MS) return cache.payload;
 
-    const frames = [];
+    const frames: Awaited<ReturnType<typeof frameState>>[] = [];
     for (const f of FRAMES) {
       try {
         frames.push(await frameState(f.interval, f.limit, f.tf));

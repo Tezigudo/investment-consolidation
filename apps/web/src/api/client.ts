@@ -7,6 +7,7 @@ import type {
   BotEventRow,
   BotEventKind,
   FuturesAnalytics,
+  DivergenceState,
 } from '@consolidate/shared';
 
 // The /futures/analytics route augments FuturesAnalytics with a config flag so
@@ -277,6 +278,9 @@ export const api = {
   // These reads are for the dashboard's BotStatusCard.
   botStatus: (source = 'snapback-btc') =>
     req<BotStatus>(`/bot-status?source=${encodeURIComponent(source)}`),
+  // RSI divergence across 4h/1D/1W. CONTEXT ONLY — measured to have no
+  // tradable edge; never key an order off it.
+  divergence: () => req<DivergenceState>('/divergence'),
   botEvents: (opts: { source?: string; kind?: BotEventKind; since?: number; limit?: number } = {}) => {
     const qs = new URLSearchParams();
     qs.set('source', opts.source ?? 'snapback-btc');

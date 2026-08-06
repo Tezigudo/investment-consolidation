@@ -427,3 +427,34 @@ export interface FuturesAnalytics {
   // ── Reconciliation (Phase 2; null until built) ──
   reconciliation: FuturesReconciliation | null;
 }
+
+// ──────────────────────────────────────────────────────────────
+// RSI divergence — CONTEXT ONLY, never a trade signal.
+//
+// Port of TradingView's built-in Divergence Indicator. Measured on BTC
+// 2019-2026 and found to have NO tradable edge: best z = +1.80 on n=6 against a
+// 1.96 threshold, and every timeframe shows hit-rate marginally above base rate
+// while AVERAGE RETURN IS NEGATIVE. Shown so the dashboard can say "BTC is
+// stretched on the daily". Nothing may key an order off this.
+// ──────────────────────────────────────────────────────────────
+export interface DivergenceHit {
+  kind: 'bull' | 'bear';
+  at: number;        // ms epoch of the bar the label prints on (pivot + lbR)
+  rsi: number;       // RSI at the pivot that formed the divergence
+  barsAgo: number | null;
+}
+
+export interface DivergenceFrame {
+  tf: string;                    // '4h' | '1D' | '1W'
+  rsi: number | null;            // RSI(14) on the latest bar
+  bullCount: number;             // signals in the fetched window
+  bearCount: number;
+  last: DivergenceHit | null;
+  windowStart: number | null;    // ms epoch of the first candle examined
+}
+
+export interface DivergenceState {
+  asOf: number;
+  symbol: string;
+  frames: DivergenceFrame[];
+}

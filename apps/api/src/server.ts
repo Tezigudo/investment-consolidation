@@ -12,6 +12,7 @@ import { depositRoutes } from './routes/deposits.js';
 import { incomeRoutes } from './routes/income.js';
 import { botEventRoutes } from './routes/bot-events.js';
 import { futuresRoutes } from './routes/futures.js';
+import { divergenceRoutes } from './routes/divergence.js';
 import { startJobs } from './jobs/scheduler.js';
 
 const app = Fastify({ logger: { level: config.NODE_ENV === 'production' ? 'info' : 'debug' } });
@@ -71,6 +72,7 @@ await app.register(depositRoutes);
 await app.register(incomeRoutes);
 await app.register(botEventRoutes);
 await app.register(futuresRoutes);
+await app.register(divergenceRoutes);
 
 app.setErrorHandler((err, _req, reply) => {
   app.log.error(err);

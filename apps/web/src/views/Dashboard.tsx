@@ -15,6 +15,7 @@ import { DepositsLedger } from '../components/DepositsLedger';
 import { IncomeCenter } from '../components/IncomeCenter';
 import { HeroHistoryChart, DeltaStrip, usePortfolioHistory } from '../components/HeroHistoryChart';
 import { BotStatusCard } from '../components/BotStatusCard';
+import { DivergenceCard } from '../components/DivergenceCard';
 import { BOT_SOURCES } from '../lib/bots';
 import type { Currency, EnrichedPosition, TradeRow } from '@consolidate/shared';
 
@@ -323,6 +324,15 @@ export function Dashboard({ currency, setCurrency, privacy }: Props) {
         {BOT_SOURCES.map((source) => (
           <BotStatusCard key={source} source={source} />
         ))}
+
+        {/* RSI divergence across 4h/1D/1W — CONTEXT ONLY, deliberately sat next
+            to the bot cards but visually separate from them. Measured on BTC
+            2019-2026 with no tradable edge (best z=+1.80, n=6), so nothing here
+            or on the droplet keys an order off it; the badge on the card says so
+            to stop it being read as a signal later. */}
+        <div style={{ marginBottom: 16 }}>
+          <DivergenceCard />
+        </div>
 
 
         {/* HOLDINGS */}

@@ -210,6 +210,7 @@ describe('pairBotTrades', () => {
     ['bracket_exit'],
     ['time_stop'],
     ['channel_exit'],
+    ['stale_position_at_boot'],
   ])('reads the bot\'s own `reason` key (%s)', (reason) => {
     const [t] = pairBotTrades([
       ev({ kind: 'entry', side: 'long', bot_ts_ms: T0, price_usd: 100, qty: 1 }),

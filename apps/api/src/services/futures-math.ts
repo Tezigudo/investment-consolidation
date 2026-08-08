@@ -366,6 +366,16 @@ export function pairBotTrades(
   return trades.sort((a, b) => a.entryTs - b.entryTs);
 }
 
+/** Exit reason as the bot spells it (`reason`), tolerating the legacy
+ *  `exit_reason` key. Returns null when neither is a usable string. */
+function exitReasonOf(exit: BotEventLite): string | null {
+  for (const k of ['reason', 'exit_reason'] as const) {
+    const v = exit.payload?.[k];
+    if (typeof v === 'string' && v.length > 0) return v;
+  }
+  return null;
+}
+
 function makeTrade(
   source: string,
   entry: BotEventLite,
@@ -400,11 +410,14 @@ function makeTrade(
     qty,
     notionalUsd: finiteOrNull(entry.notional_usd),
     pnlUsd,
-    exitReason: exit
-      ? (typeof exit.payload?.exit_reason === 'string'
-          ? (exit.payload.exit_reason as string)
-          : exit.kind)
-      : null,
+    // The bot writes `reason`, never `exit_reason` — every exit it emits
+    // (bracket_exit / time_stop / channel_exit / stale_position_at_boot) uses
+    // payload={"reason": ...}, and the web components already read
+    // `payload.reason`. Reading only `exit_reason` here meant this column
+    // silently fell back to `kind` ("exit") for every leg since it shipped;
+    // the test fixtures used the wrong key too, so nothing caught it.
+    // `exit_reason` is kept as a fallback so any older row still resolves.
+    exitReason: exit ? (exitReasonOf(exit) ?? exit.kind) : null,
     // Pending exit only exists while the trade is open.
     exitPlan: exit ? null : computeExitPlan(entry, side, entryPrice, nowMs),
   };

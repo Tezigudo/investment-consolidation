@@ -195,12 +195,44 @@ describe('pairBotTrades', () => {
   it('pairs entry→exit and prefers equity delta for PnL', () => {
     const trades = pairBotTrades([
       ev({ kind: 'entry', side: 'long', bot_ts_ms: T0, price_usd: 100, qty: 1, equity_usd: 100 }),
-      ev({ kind: 'exit', bot_ts_ms: T0 + DAY, price_usd: 110, equity_usd: 109, payload: { exit_reason: 'take_profit' } }),
+      // `reason` is the key the bot actually writes — see exitReasonOf().
+      ev({ kind: 'exit', bot_ts_ms: T0 + DAY, price_usd: 110, equity_usd: 109, payload: { reason: 'take_profit' } }),
     ]);
     expect(trades).toHaveLength(1);
     expect(trades[0].pnlUsd).toBe(9); // equity delta 109−100, not price move (10)
     expect(trades[0].exitReason).toBe('take_profit');
     expect(trades[0].exitTs).toBe(T0 + DAY);
+  });
+
+  // Regression: the bot emits payload={"reason": ...}; reading only
+  // `exit_reason` made every real trade's exit reason render as "exit".
+  it.each([
+    ['bracket_exit'],
+    ['time_stop'],
+    ['channel_exit'],
+    ['stale_position_at_boot'],
+  ])('reads the bot\'s own `reason` key (%s)', (reason) => {
+    const [t] = pairBotTrades([
+      ev({ kind: 'entry', side: 'long', bot_ts_ms: T0, price_usd: 100, qty: 1 }),
+      ev({ kind: 'exit', bot_ts_ms: T0 + 100, price_usd: 110, payload: { reason } }),
+    ]);
+    expect(t.exitReason).toBe(reason);
+  });
+
+  it('still honours the legacy exit_reason key', () => {
+    const [t] = pairBotTrades([
+      ev({ kind: 'entry', side: 'long', bot_ts_ms: T0, price_usd: 100, qty: 1 }),
+      ev({ kind: 'exit', bot_ts_ms: T0 + 100, price_usd: 110, payload: { exit_reason: 'take_profit' } }),
+    ]);
+    expect(t.exitReason).toBe('take_profit');
+  });
+
+  it('falls back to kind when the payload carries no reason', () => {
+    const [t] = pairBotTrades([
+      ev({ kind: 'entry', side: 'long', bot_ts_ms: T0, price_usd: 100, qty: 1 }),
+      ev({ kind: 'exit', bot_ts_ms: T0 + 100, price_usd: 110, payload: {} }),
+    ]);
+    expect(t.exitReason).toBe('exit');
   });
 
   it('falls back to price×qty×direction when equity is absent (short)', () => {
@@ -366,7 +398,7 @@ describe('exit plan (open trades)', () => {
     const [t] = pairBotTrades([
       ev({ strategy: 'donchian-v3', kind: 'entry', side: 'long', bot_ts_ms: T0, price_usd: 108000,
         payload: { sl_distance: 1600 } }),
-      ev({ kind: 'exit', bot_ts_ms: T0 + H4, price_usd: 110000, payload: { exit_reason: 'channel_exit' } }),
+      ev({ kind: 'exit', bot_ts_ms: T0 + H4, price_usd: 110000, payload: { reason: 'channel_exit' } }),
     ], NOW);
     expect(t.exitPlan).toBeNull();
   });

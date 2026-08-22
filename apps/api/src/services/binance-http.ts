@@ -231,6 +231,23 @@ export async function binancePublicGet<T>(
   });
 }
 
+// Unsigned GET against the USDT-M Futures host (fapi). Public market data only.
+//
+// Deliberately separate from binancePublicGet, which targets the SPOT host: the
+// bot trades the PERP (BTC/USDT:USDT) and computes its Donchian channel on PERP
+// closes, so a dashboard that read spot klines would quote a channel level the
+// bot will never act on. Same weight pacer as every other caller.
+export async function binanceFuturesPublicGet<T>(
+  path: string,
+  params: Record<string, string | number> = {},
+): Promise<T> {
+  return runWithRetries<T>(path, () => {
+    const qs = buildQuery(params);
+    const url = qs.toString() ? `${FAPI_BASE}${path}?${qs.toString()}` : `${FAPI_BASE}${path}`;
+    return fetch(url);
+  });
+}
+
 // Signed GET against the USDT-M Futures host (fapi). READ-ONLY by contract:
 // every caller in binance-futures.ts is a GET. Never add POST/DELETE order
 // endpoints here — this whole app must not be able to trade. Uses the futures

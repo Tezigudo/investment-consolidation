@@ -5,6 +5,7 @@
 import { useState } from 'react';
 import { useFuturesAnalytics } from '../../hooks/usePortfolio';
 import { AreaChart } from '../../components/charts';
+import { ChannelLadderCard } from '../../components/ChannelLadderCard';
 import { M } from './styles';
 import type { FuturesExitPlan, ManualSymbolStats } from '@consolidate/shared';
 import { splitRealizedBySymbol, isBotSymbol } from '@consolidate/shared';
@@ -172,6 +173,8 @@ export function FuturesTab({ privacy }: { privacy: boolean }) {
               {data.manualTrades.map((m) => <ManualCard key={m.symbol} m={m} days={days} privacy={privacy} />)}
             </>
           )}
+
+          <ChannelLadderCard privacy={privacy} />
 
           {/* bot legs */}
           <div style={M.section as React.CSSProperties}>Bot legs</div>

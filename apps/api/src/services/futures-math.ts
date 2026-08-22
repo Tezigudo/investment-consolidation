@@ -232,6 +232,13 @@ export interface BotEventLite {
 
 const CLOSING_KINDS = new Set(['exit', 'kill_switch', 'halt', 'boot_flatten']);
 
+/**
+ * Every event kind pairBotTrades actually reads. Exported so a caller narrowing
+ * its SQL can filter on THIS rather than a hand-copied list — dropping a kind
+ * the pairer closes on would silently leave an entry looking open forever.
+ */
+export const PAIRING_KINDS: readonly string[] = ['entry', ...CLOSING_KINDS];
+
 // ── Per-strategy exit metadata ──────────────────────────────────────────────
 // Mirrored from the deployed snapback configs (config/params.yaml,
 // config/params_donchian.yaml). The bot does NOT emit its hold window or bar
@@ -247,6 +254,14 @@ interface StrategyMeta {
   maxHoldBars: number;   // time-stop: flatten after this many bars
   placesTp: boolean;     // does the entry place a TP bracket leg?
   exitCondition: string; // human-readable "what closes this position"
+  /**
+   * Donchian EXIT-channel period, in entry-TF bars, for strategies whose
+   * profit-taking IS a channel cross (placesTp: false). Mirrored from
+   * config/params_donchian.yaml `donchian_period_exit` under the same
+   * no-runtime-cross-check caveat as maxHoldBars. Omitted for bracket
+   * strategies, which have no trailing level to draw.
+   */
+  channelExitPeriod?: number;
 }
 
 const STRATEGY_META: Record<string, StrategyMeta> = {
@@ -264,8 +279,18 @@ const STRATEGY_META: Record<string, StrategyMeta> = {
     maxHoldBars: 48,
     placesTp: false,
     exitCondition: '4h close beyond 10-bar Donchian · SL 1.5×ATR',
+    channelExitPeriod: 10,
   },
 };
+
+/**
+ * Read-only view of the mirrored per-strategy constants. Exported so the
+ * channel-ladder route reads the SAME numbers the exit plan does — a second
+ * hardcoded `10` in another file is exactly how these drift.
+ */
+export function strategyMeta(name: string | null | undefined): StrategyMeta | undefined {
+  return name ? STRATEGY_META[name] : undefined;
+}
 
 function payloadNum(
   p: Record<string, unknown> | null | undefined,

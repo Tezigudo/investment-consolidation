@@ -16,6 +16,7 @@
 import { useState } from 'react';
 import { useFuturesAnalytics, usePortfolio } from '../hooks/usePortfolio';
 import { AreaChart } from '../components/charts';
+import { ChannelLadderCard } from '../components/ChannelLadderCard';
 import type {
   FuturesPosition,
   FuturesBotLegStats,
@@ -250,7 +251,9 @@ export function Futures({ privacy }: Props) {
             );
           })()}
 
-          {/* ── Bot legs ── */}
+          <ChannelLadderCard privacy={privacy} />
+
+      {/* ── Bot legs ── */}
           <Section title="Bot legs (snapback attribution)" sub="per-leg, from pushed entry/exit events">
             <div style={card}>
               {data.botLegs.length === 0

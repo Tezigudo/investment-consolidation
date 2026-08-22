@@ -8,6 +8,7 @@ import type {
   BotEventKind,
   FuturesAnalytics,
   DivergenceState,
+  ChannelLadderState,
 } from '@consolidate/shared';
 
 // The /futures/analytics route augments FuturesAnalytics with a config flag so
@@ -281,6 +282,10 @@ export const api = {
   // RSI divergence across 4h/1D/1W. CONTEXT ONLY — measured to have no
   // tradable edge; never key an order off it.
   divergence: () => req<DivergenceState>('/divergence'),
+
+  // Trailing Donchian exit level for an OPEN channel-exit leg. Returns
+  // { available: false } when the leg is flat — the normal resting state.
+  donchianLadder: () => req<ChannelLadderState>('/donchian-ladder'),
   botEvents: (opts: { source?: string; kind?: BotEventKind; since?: number; limit?: number } = {}) => {
     const qs = new URLSearchParams();
     qs.set('source', opts.source ?? 'snapback-btc');

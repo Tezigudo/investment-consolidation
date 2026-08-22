@@ -458,3 +458,40 @@ export interface DivergenceState {
   symbol: string;
   frames: DivergenceFrame[];
 }
+
+// ── Donchian channel-exit ladder ────────────────────────────────────────────
+// For a leg whose profit-taking IS a channel cross (donchian-v3), there is no
+// TP price to show — the honest answer is where the TRAILING exit level sits
+// over the coming bars. Only rung 0 is fact; the rest assume `assumedCloseUsd`.
+// The channel is tested at BAR CLOSE only, while the resting ATR stop triggers
+// intrabar, so the stop remains the fast exit even after the level passes it.
+export interface ChannelLadderRow {
+  barCloseMs: number;      // when the bar this level tests will close
+  exitLevelUsd: number;    // the level that bar's close is tested against
+  vsMarkPct: number;       // signed distance from mark, percent
+  clearsSl: boolean;       // level has ratcheted past the resting stop
+  crossesEntry: boolean;   // exiting here is no longer a loss
+  projected: boolean;      // false only for rung 0 (fully determined by real closes)
+}
+
+export interface ChannelLadder {
+  side: 'long' | 'short';
+  period: number;          // Donchian exit-channel period, entry-TF bars
+  barMs: number;
+  lastClosedBarMs: number;
+  markUsd: number;
+  entryPriceUsd: number | null;
+  slPriceUsd: number | null;
+  assumedCloseUsd: number; // what every FUTURE bar is assumed to close at
+  nextLevelUsd: number;    // the level testing the very next bar — known, not projected
+  rows: ChannelLadderRow[];
+}
+
+// Wrapper so the UI can distinguish "leg is flat" from "we could not compute".
+export interface ChannelLadderState {
+  available: boolean;
+  reason: string | null;   // why unavailable, when it is
+  source: string | null;   // bot leg, e.g. 'snapback-btc-donchian'
+  strategy: string | null;
+  ladder: ChannelLadder | null;
+}

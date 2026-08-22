@@ -1,0 +1,423 @@
+{
+  "_comment": "Generated from strategy/live_donchian_v3.channel_exit_signal semantics in snapback-btc against real BTCUSDT PERP 4h klines (fapi). exitLower/exitUpper are Close.rolling(N).min()/max().shift(1) with N=donchian_period_exit. The forming bar Binance returns last is already dropped. Regenerate only if the bot's geometry changes; the point of the fixture is that TS must match Python.",
+  "symbol": "BTCUSDT",
+  "interval": "4h",
+  "market": "usdm-perp",
+  "period": 10,
+  "formingBarDropped": true,
+  "bars": [
+    {
+      "openTimeMs": 1786521600000,
+      "closeTimeMs": 1786535999999,
+      "close": 64207.3,
+      "exitLower": null,
+      "exitUpper": null
+    },
+    {
+      "openTimeMs": 1786536000000,
+      "closeTimeMs": 1786550399999,
+      "close": 63421.4,
+      "exitLower": null,
+      "exitUpper": null
+    },
+    {
+      "openTimeMs": 1786550400000,
+      "closeTimeMs": 1786564799999,
+      "close": 63394.9,
+      "exitLower": null,
+      "exitUpper": null
+    },
+    {
+      "openTimeMs": 1786564800000,
+      "closeTimeMs": 1786579199999,
+      "close": 63454.7,
+      "exitLower": null,
+      "exitUpper": null
+    },
+    {
+      "openTimeMs": 1786579200000,
+      "closeTimeMs": 1786593599999,
+      "close": 63623.5,
+      "exitLower": null,
+      "exitUpper": null
+    },
+    {
+      "openTimeMs": 1786593600000,
+      "closeTimeMs": 1786607999999,
+      "close": 63833.0,
+      "exitLower": null,
+      "exitUpper": null
+    },
+    {
+      "openTimeMs": 1786608000000,
+      "closeTimeMs": 1786622399999,
+      "close": 63458.5,
+      "exitLower": null,
+      "exitUpper": null
+    },
+    {
+      "openTimeMs": 1786622400000,
+      "closeTimeMs": 1786636799999,
+      "close": 63385.0,
+      "exitLower": null,
+      "exitUpper": null
+    },
+    {
+      "openTimeMs": 1786636800000,
+      "closeTimeMs": 1786651199999,
+      "close": 63387.4,
+      "exitLower": null,
+      "exitUpper": null
+    },
+    {
+      "openTimeMs": 1786651200000,
+      "closeTimeMs": 1786665599999,
+      "close": 63456.7,
+      "exitLower": null,
+      "exitUpper": null
+    },
+    {
+      "openTimeMs": 1786665600000,
+      "closeTimeMs": 1786679999999,
+      "close": 63288.1,
+      "exitLower": 63385.0,
+      "exitUpper": 64207.3
+    },
+    {
+      "openTimeMs": 1786680000000,
+      "closeTimeMs": 1786694399999,
+      "close": 62888.1,
+      "exitLower": 63288.1,
+      "exitUpper": 63833.0
+    },
+    {
+      "openTimeMs": 1786694400000,
+      "closeTimeMs": 1786708799999,
+      "close": 62837.4,
+      "exitLower": 62888.1,
+      "exitUpper": 63833.0
+    },
+    {
+      "openTimeMs": 1786708800000,
+      "closeTimeMs": 1786723199999,
+      "close": 62956.0,
+      "exitLower": 62837.4,
+      "exitUpper": 63833.0
+    },
+    {
+      "openTimeMs": 1786723200000,
+      "closeTimeMs": 1786737599999,
+      "close": 62936.3,
+      "exitLower": 62837.4,
+      "exitUpper": 63833.0
+    },
+    {
+      "openTimeMs": 1786737600000,
+      "closeTimeMs": 1786751999999,
+      "close": 63015.0,
+      "exitLower": 62837.4,
+      "exitUpper": 63833.0
+    },
+    {
+      "openTimeMs": 1786752000000,
+      "closeTimeMs": 1786766399999,
+      "close": 63030.3,
+      "exitLower": 62837.4,
+      "exitUpper": 63458.5
+    },
+    {
+      "openTimeMs": 1786766400000,
+      "closeTimeMs": 1786780799999,
+      "close": 63049.8,
+      "exitLower": 62837.4,
+      "exitUpper": 63456.7
+    },
+    {
+      "openTimeMs": 1786780800000,
+      "closeTimeMs": 1786795199999,
+      "close": 62993.1,
+      "exitLower": 62837.4,
+      "exitUpper": 63456.7
+    },
+    {
+      "openTimeMs": 1786795200000,
+      "closeTimeMs": 1786809599999,
+      "close": 63068.0,
+      "exitLower": 62837.4,
+      "exitUpper": 63456.7
+    },
+    {
+      "openTimeMs": 1786809600000,
+      "closeTimeMs": 1786823999999,
+      "close": 63093.6,
+      "exitLower": 62837.4,
+      "exitUpper": 63288.1
+    },
+    {
+      "openTimeMs": 1786824000000,
+      "closeTimeMs": 1786838399999,
+      "close": 63053.9,
+      "exitLower": 62837.4,
+      "exitUpper": 63093.6
+    },
+    {
+      "openTimeMs": 1786838400000,
+      "closeTimeMs": 1786852799999,
+      "close": 63096.6,
+      "exitLower": 62837.4,
+      "exitUpper": 63093.6
+    },
+    {
+      "openTimeMs": 1786852800000,
+      "closeTimeMs": 1786867199999,
+      "close": 63034.3,
+      "exitLower": 62936.3,
+      "exitUpper": 63096.6
+    },
+    {
+      "openTimeMs": 1786867200000,
+      "closeTimeMs": 1786881599999,
+      "close": 62981.1,
+      "exitLower": 62936.3,
+      "exitUpper": 63096.6
+    },
+    {
+      "openTimeMs": 1786881600000,
+      "closeTimeMs": 1786895999999,
+      "close": 63113.8,
+      "exitLower": 62981.1,
+      "exitUpper": 63096.6
+    },
+    {
+      "openTimeMs": 1786896000000,
+      "closeTimeMs": 1786910399999,
+      "close": 63082.2,
+      "exitLower": 62981.1,
+      "exitUpper": 63113.8
+    },
+    {
+      "openTimeMs": 1786910400000,
+      "closeTimeMs": 1786924799999,
+      "close": 62876.0,
+      "exitLower": 62981.1,
+      "exitUpper": 63113.8
+    },
+    {
+      "openTimeMs": 1786924800000,
+      "closeTimeMs": 1786939199999,
+      "close": 63409.8,
+      "exitLower": 62876.0,
+      "exitUpper": 63113.8
+    },
+    {
+      "openTimeMs": 1786939200000,
+      "closeTimeMs": 1786953599999,
+      "close": 63493.5,
+      "exitLower": 62876.0,
+      "exitUpper": 63409.8
+    },
+    {
+      "openTimeMs": 1786953600000,
+      "closeTimeMs": 1786967999999,
+      "close": 63600.0,
+      "exitLower": 62876.0,
+      "exitUpper": 63493.5
+    },
+    {
+      "openTimeMs": 1786968000000,
+      "closeTimeMs": 1786982399999,
+      "close": 64169.9,
+      "exitLower": 62876.0,
+      "exitUpper": 63600.0
+    },
+    {
+      "openTimeMs": 1786982400000,
+      "closeTimeMs": 1786996799999,
+      "close": 64280.4,
+      "exitLower": 62876.0,
+      "exitUpper": 64169.9
+    },
+    {
+      "openTimeMs": 1786996800000,
+      "closeTimeMs": 1787011199999,
+      "close": 64504.1,
+      "exitLower": 62876.0,
+      "exitUpper": 64280.4
+    },
+    {
+      "openTimeMs": 1787011200000,
+      "closeTimeMs": 1787025599999,
+      "close": 64147.4,
+      "exitLower": 62876.0,
+      "exitUpper": 64504.1
+    },
+    {
+      "openTimeMs": 1787025600000,
+      "closeTimeMs": 1787039999999,
+      "close": 64170.9,
+      "exitLower": 62876.0,
+      "exitUpper": 64504.1
+    },
+    {
+      "openTimeMs": 1787040000000,
+      "closeTimeMs": 1787054399999,
+      "close": 64326.0,
+      "exitLower": 62876.0,
+      "exitUpper": 64504.1
+    },
+    {
+      "openTimeMs": 1787054400000,
+      "closeTimeMs": 1787068799999,
+      "close": 64823.9,
+      "exitLower": 62876.0,
+      "exitUpper": 64504.1
+    },
+    {
+      "openTimeMs": 1787068800000,
+      "closeTimeMs": 1787083199999,
+      "close": 64619.7,
+      "exitLower": 63409.8,
+      "exitUpper": 64823.9
+    },
+    {
+      "openTimeMs": 1787083200000,
+      "closeTimeMs": 1787097599999,
+      "close": 64694.0,
+      "exitLower": 63493.5,
+      "exitUpper": 64823.9
+    },
+    {
+      "openTimeMs": 1787097600000,
+      "closeTimeMs": 1787111999999,
+      "close": 64296.3,
+      "exitLower": 63600.0,
+      "exitUpper": 64823.9
+    },
+    {
+      "openTimeMs": 1787112000000,
+      "closeTimeMs": 1787126399999,
+      "close": 64266.1,
+      "exitLower": 64147.4,
+      "exitUpper": 64823.9
+    },
+    {
+      "openTimeMs": 1787126400000,
+      "closeTimeMs": 1787140799999,
+      "close": 64479.0,
+      "exitLower": 64147.4,
+      "exitUpper": 64823.9
+    },
+    {
+      "openTimeMs": 1787140800000,
+      "closeTimeMs": 1787155199999,
+      "close": 68523.7,
+      "exitLower": 64147.4,
+      "exitUpper": 64823.9
+    },
+    {
+      "openTimeMs": 1787155200000,
+      "closeTimeMs": 1787169599999,
+      "close": 68404.1,
+      "exitLower": 64147.4,
+      "exitUpper": 68523.7
+    },
+    {
+      "openTimeMs": 1787169600000,
+      "closeTimeMs": 1787183999999,
+      "close": 69310.0,
+      "exitLower": 64170.9,
+      "exitUpper": 68523.7
+    },
+    {
+      "openTimeMs": 1787184000000,
+      "closeTimeMs": 1787198399999,
+      "close": 69183.5,
+      "exitLower": 64266.1,
+      "exitUpper": 69310.0
+    },
+    {
+      "openTimeMs": 1787198400000,
+      "closeTimeMs": 1787212799999,
+      "close": 69815.9,
+      "exitLower": 64266.1,
+      "exitUpper": 69310.0
+    },
+    {
+      "openTimeMs": 1787212800000,
+      "closeTimeMs": 1787227199999,
+      "close": 71896.2,
+      "exitLower": 64266.1,
+      "exitUpper": 69815.9
+    },
+    {
+      "openTimeMs": 1787227200000,
+      "closeTimeMs": 1787241599999,
+      "close": 72429.0,
+      "exitLower": 64266.1,
+      "exitUpper": 71896.2
+    },
+    {
+      "openTimeMs": 1787241600000,
+      "closeTimeMs": 1787255999999,
+      "close": 72649.7,
+      "exitLower": 64266.1,
+      "exitUpper": 72429.0
+    },
+    {
+      "openTimeMs": 1787256000000,
+      "closeTimeMs": 1787270399999,
+      "close": 72998.7,
+      "exitLower": 64266.1,
+      "exitUpper": 72649.7
+    },
+    {
+      "openTimeMs": 1787270400000,
+      "closeTimeMs": 1787284799999,
+      "close": 74482.9,
+      "exitLower": 64479.0,
+      "exitUpper": 72998.7
+    },
+    {
+      "openTimeMs": 1787284800000,
+      "closeTimeMs": 1787299199999,
+      "close": 76310.4,
+      "exitLower": 68404.1,
+      "exitUpper": 74482.9
+    },
+    {
+      "openTimeMs": 1787299200000,
+      "closeTimeMs": 1787313599999,
+      "close": 76749.0,
+      "exitLower": 68404.1,
+      "exitUpper": 76310.4
+    },
+    {
+      "openTimeMs": 1787313600000,
+      "closeTimeMs": 1787327999999,
+      "close": 77219.8,
+      "exitLower": 69183.5,
+      "exitUpper": 76749.0
+    },
+    {
+      "openTimeMs": 1787328000000,
+      "closeTimeMs": 1787342399999,
+      "close": 76995.4,
+      "exitLower": 69183.5,
+      "exitUpper": 77219.8
+    },
+    {
+      "openTimeMs": 1787342400000,
+      "closeTimeMs": 1787356799999,
+      "close": 78309.1,
+      "exitLower": 69815.9,
+      "exitUpper": 77219.8
+    },
+    {
+      "openTimeMs": 1787356800000,
+      "closeTimeMs": 1787371199999,
+      "close": 78395.0,
+      "exitLower": 71896.2,
+      "exitUpper": 78309.1
+    }
+  ]
+}

@@ -13,6 +13,7 @@ import { incomeRoutes } from './routes/income.js';
 import { botEventRoutes } from './routes/bot-events.js';
 import { futuresRoutes } from './routes/futures.js';
 import { divergenceRoutes } from './routes/divergence.js';
+import { donchianLadderRoutes } from './routes/donchian-ladder.js';
 import { startJobs } from './jobs/scheduler.js';
 
 const app = Fastify({ logger: { level: config.NODE_ENV === 'production' ? 'info' : 'debug' } });
@@ -73,6 +74,7 @@ await app.register(incomeRoutes);
 await app.register(botEventRoutes);
 await app.register(futuresRoutes);
 await app.register(divergenceRoutes);
+await app.register(donchianLadderRoutes);
 
 app.setErrorHandler((err, _req, reply) => {
   app.log.error(err);

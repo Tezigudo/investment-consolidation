@@ -9,6 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import fixture from './__fixtures__/donchian-channel.json';
 import { buildChannelLadder, channelLevel, channelLevelSeries } from './donchian-ladder.js';
+import { PAIRING_KINDS, pairBotTrades, type BotEventLite } from './futures-math.js';
 
 const BAR_MS = 4 * 60 * 60_000;
 const closes: number[] = fixture.bars.map((b) => b.close);
@@ -113,5 +114,43 @@ describe('buildChannelLadder', () => {
     const l = buildChannelLadder({ ...base, assumedCloseUsd: 73_000, rows: fixture.period + 2 })!;
     expect(l.assumedCloseUsd).toBe(73_000);
     expect(l.rows[l.rows.length - 1].exitLevelUsd).toBe(73_000);
+  });
+});
+
+// The ladder route narrows its SQL to PAIRING_KINDS to avoid loading every
+// heartbeat. That filter is only safe while it covers everything pairBotTrades
+// closes a trade on — drop 'halt' from it and a halted leg's entry would look
+// open forever, and the card would draw a ladder for a position that is gone.
+describe('PAIRING_KINDS covers everything pairBotTrades acts on', () => {
+  const ev = (kind: string, ms: number, extra: Partial<BotEventLite> = {}): BotEventLite => ({
+    source: 'snapback-btc-donchian',
+    kind,
+    side: 'long',
+    qty: 0.003,
+    price_usd: 72_645.5,
+    notional_usd: 217.95,
+    equity_usd: 150.53,
+    bot_ts_ms: ms,
+    strategy: 'donchian-v3',
+    payload: null,
+    ...extra,
+  });
+
+  it('includes entry', () => {
+    expect(PAIRING_KINDS).toContain('entry');
+  });
+
+  it('every non-entry kind in the list actually CLOSES an open trade', () => {
+    for (const kind of PAIRING_KINDS.filter((k) => k !== 'entry')) {
+      const trades = pairBotTrades([ev('entry', 1_000), ev(kind, 2_000)], 3_000);
+      expect(trades).toHaveLength(1);
+      expect(trades[0].exitTs, `${kind} should close the trade`).not.toBeNull();
+    }
+  });
+
+  it('an entry with no closing event stays open — what the ladder keys off', () => {
+    const trades = pairBotTrades([ev('entry', 1_000)], 3_000);
+    expect(trades).toHaveLength(1);
+    expect(trades[0].exitTs).toBeNull();
   });
 });

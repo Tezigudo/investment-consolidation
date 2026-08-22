@@ -19,7 +19,12 @@ import type { FastifyInstance } from 'fastify';
 import type { ChannelLadderState, FuturesBotTrade } from '@consolidate/shared';
 import { pool } from '../db/client.js';
 import { binanceFuturesPublicGet } from '../services/binance-http.js';
-import { pairBotTrades, strategyMeta, type BotEventLite } from '../services/futures-math.js';
+import {
+  pairBotTrades,
+  strategyMeta,
+  PAIRING_KINDS,
+  type BotEventLite,
+} from '../services/futures-math.js';
 import { buildChannelLadder, type LadderCandle } from '../services/donchian-ladder.js';
 
 // The mark moves continuously even though the level only changes every 4h, so
@@ -41,10 +46,12 @@ const unavailable = (reason: string): ChannelLadderState => ({
   ladder: null,
 });
 
-/** Symbol on fapi for a bot leg. Only BTC legs run a channel exit today. */
-function fapiSymbol(_source: string): string {
-  return 'BTCUSDT';
-}
+// fapi symbol per bot leg. Explicitly a map, not a constant with a source
+// parameter it ignores: a future non-BTC channel-exit leg must fail closed here
+// rather than silently draw a BTC ladder over someone else's position.
+const LEG_SYMBOL: Record<string, string> = {
+  'snapback-btc-donchian': 'BTCUSDT',
+};
 
 async function openChannelTrade(): Promise<FuturesBotTrade | null> {
   const { rows } = await pool.query<{
@@ -56,8 +63,9 @@ async function openChannelTrade(): Promise<FuturesBotTrade | null> {
             equity_usd, strategy, payload
        FROM bot_events
       WHERE bot_ts >= $1
+        AND kind = ANY($2)
       ORDER BY bot_ts ASC`,
-    [Date.now() - LOOKBACK_MS],
+    [Date.now() - LOOKBACK_MS, PAIRING_KINDS],
   );
 
   const events: BotEventLite[] = rows.map((r) => ({
@@ -68,7 +76,7 @@ async function openChannelTrade(): Promise<FuturesBotTrade | null> {
     price_usd: r.price_usd != null ? Number(r.price_usd) : null,
     notional_usd: r.notional_usd != null ? Number(r.notional_usd) : null,
     equity_usd: r.equity_usd != null ? Number(r.equity_usd) : null,
-    bot_ts_ms: Number(new Date(r.bot_ts)),
+    bot_ts_ms: Number(r.bot_ts), // BIGINT ms-epoch as text — NOT a date string
     strategy: r.strategy,
     payload: r.payload,
   }));
@@ -95,8 +103,14 @@ export async function donchianLadderRoutes(app: FastifyInstance) {
       } else {
         const meta = strategyMeta(trade.strategy)!;
         const period = meta.channelExitPeriod!;
+        const symbol = LEG_SYMBOL[trade.source];
+        if (!symbol) {
+          payload = unavailable(`no fapi symbol mapped for leg ${trade.source}`);
+          cache = { at: Date.now(), payload };
+          return payload;
+        }
         const rawRows = await binanceFuturesPublicGet<RawKline[]>('/fapi/v1/klines', {
-          symbol: fapiSymbol(trade.source),
+          symbol,
           interval: '4h',
           limit: Math.max(period + ROWS + 10, 50),
         });

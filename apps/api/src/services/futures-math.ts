@@ -232,6 +232,13 @@ export interface BotEventLite {
 
 const CLOSING_KINDS = new Set(['exit', 'kill_switch', 'halt', 'boot_flatten']);
 
+/**
+ * Every event kind pairBotTrades actually reads. Exported so a caller narrowing
+ * its SQL can filter on THIS rather than a hand-copied list — dropping a kind
+ * the pairer closes on would silently leave an entry looking open forever.
+ */
+export const PAIRING_KINDS: readonly string[] = ['entry', ...CLOSING_KINDS];
+
 // ── Per-strategy exit metadata ──────────────────────────────────────────────
 // Mirrored from the deployed snapback configs (config/params.yaml,
 // config/params_donchian.yaml). The bot does NOT emit its hold window or bar

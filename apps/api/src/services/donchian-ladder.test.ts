@@ -8,7 +8,7 @@
 
 import { describe, it, expect } from 'vitest';
 import fixture from './__fixtures__/donchian-channel.json';
-import { buildChannelLadder, channelLevel, channelLevelSeries } from './donchian-ladder.js';
+import { buildChannelLadder, channelLevel, channelLevelSeries, ladderSide } from './donchian-ladder.js';
 import { PAIRING_KINDS, pairBotTrades, type BotEventLite } from './futures-math.js';
 
 const BAR_MS = 4 * 60 * 60_000;
@@ -152,5 +152,23 @@ describe('PAIRING_KINDS covers everything pairBotTrades acts on', () => {
     const trades = pairBotTrades([ev('entry', 1_000)], 3_000);
     expect(trades).toHaveLength(1);
     expect(trades[0].exitTs).toBeNull();
+  });
+});
+
+// Sourcery caught this on PR #42: the route narrowed side with
+// `trade.side === 'short' ? 'short' : 'long'`, so a null side drew a LONG
+// ladder. bot_events accepts a nullable side on entries and pairBotTrades
+// doesn't filter it, so that was reachable — and a lower-channel ladder over a
+// short is wrong in direction with clearsSl/crossesEntry inverted, silently.
+describe('ladderSide fails closed', () => {
+  it('passes through the two real sides', () => {
+    expect(ladderSide('long')).toBe('long');
+    expect(ladderSide('short')).toBe('short');
+  });
+
+  it('returns null for absent/unknown rather than defaulting to long', () => {
+    expect(ladderSide(null)).toBeNull();
+    expect(ladderSide(undefined)).toBeNull();
+    expect(ladderSide('LONG' as 'long')).toBeNull();
   });
 });

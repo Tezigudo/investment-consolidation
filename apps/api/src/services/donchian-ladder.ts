@@ -31,6 +31,25 @@
 
 import type { ChannelLadder, ChannelLadderRow } from '@consolidate/shared';
 
+/**
+ * Narrow a bot event's side to one the ladder can actually draw.
+ *
+ * bot_events accepts `side` as nullable on EVERY kind, entries included
+ * (routes/bot-events.ts), and pairBotTrades does not filter on it — so a
+ * null-side entry reaches the ladder. Defaulting that to 'long' would draw a
+ * lower-channel ladder over a short: right shape, wrong direction, with
+ * clearsSl/crossesEntry inverted and no error anywhere. Fail closed instead,
+ * like every other guard on this path.
+ *
+ * The zod enum means a garbage STRING cannot get in; null/absent is the only
+ * reachable bad value. Handled by structure rather than by trusting that.
+ */
+export function ladderSide(
+  side: 'long' | 'short' | null | undefined,
+): 'long' | 'short' | null {
+  return side === 'long' || side === 'short' ? side : null;
+}
+
 export interface LadderCandle {
   closeTimeMs: number;
   close: number;

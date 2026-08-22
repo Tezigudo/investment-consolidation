@@ -25,7 +25,7 @@ import {
   PAIRING_KINDS,
   type BotEventLite,
 } from '../services/futures-math.js';
-import { buildChannelLadder, type LadderCandle } from '../services/donchian-ladder.js';
+import { buildChannelLadder, ladderSide, type LadderCandle } from '../services/donchian-ladder.js';
 
 // The mark moves continuously even though the level only changes every 4h, so
 // this is short. Still enough to keep a dashboard poll off Binance's weight.
@@ -103,6 +103,12 @@ export async function donchianLadderRoutes(app: FastifyInstance) {
       } else {
         const meta = strategyMeta(trade.strategy)!;
         const period = meta.channelExitPeriod!;
+        const side = ladderSide(trade.side);
+        if (!side) {
+          payload = unavailable(`open entry for ${trade.source} has no usable side`);
+          cache = { at: Date.now(), payload };
+          return payload;
+        }
         const symbol = LEG_SYMBOL[trade.source];
         if (!symbol) {
           payload = unavailable(`no fapi symbol mapped for leg ${trade.source}`);
@@ -127,7 +133,7 @@ export async function donchianLadderRoutes(app: FastifyInstance) {
           closedCandles,
           period,
           barMs: meta.barMs,
-          side: trade.side === 'short' ? 'short' : 'long',
+          side,
           markUsd: mark,
           entryPriceUsd: trade.entryPriceUsd,
           slPriceUsd: trade.exitPlan?.slPriceUsd ?? null,

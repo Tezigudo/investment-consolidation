@@ -273,9 +273,11 @@ export function Futures({ privacy }: Props) {
             </div>
           </Section>
 
-          {/* ── Recent bot trades ── */}
+          {/* ── Recent bot trades ──
+              "resolved", not "in range": the list is windowed by EXIT time, so
+              a trade here can carry an entry date older than the range start. */}
           {data.botTrades.length > 0 && (
-            <Section title="Recent bot trades" sub={`${data.botTrades.length} in range`}>
+            <Section title="Recent bot trades" sub={`${data.botTrades.length} resolved in the last ${data.rangeDays}d`}>
               <div style={card}><TradeTable trades={data.botTrades.slice(-25).reverse()} privacy={privacy} /></div>
             </Section>
           )}
@@ -466,8 +468,12 @@ function LegTable({ legs, lifetime, days, privacy }: {
               <td style={td}><b>{life.source.replace('snapback-btc', 'v1').replace('v1-', '')}</b></td>
               <td style={{ ...td, color: MUTED }}>{life.strategy ?? '—'}</td>
               <td style={td}>
+                {/* r.openTrade and life.openTrade are provably identical —
+                    tradesClosedWithin keeps every open trade regardless of
+                    window — but read from the windowed row so the annotation
+                    belongs to the number it sits on. */}
                 <Dual
-                  top={<>{r?.trades ?? 0}{life.openTrade ? ' +1 open' : ''}</>}
+                  top={<>{r?.trades ?? 0}{(r?.openTrade ?? life.openTrade) ? ' +1 open' : ''}</>}
                   bottom={`${life.trades} lifetime`}
                 />
               </td>

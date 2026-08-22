@@ -254,17 +254,30 @@ export function Futures({ privacy }: Props) {
           <ChannelLadderCard privacy={privacy} />
 
       {/* ── Bot legs ── */}
-          <Section title="Bot legs (snapback attribution)" sub="per-leg, from pushed entry/exit events">
+          <Section
+            title="Bot legs (snapback attribution)"
+            sub={`last ${data.rangeDays}d over lifetime · from pushed entry/exit events`}
+          >
             <div style={card}>
-              {data.botLegs.length === 0
+              {/* ?? botLegs: web and API deploy independently, so a freshly
+                  shipped page can briefly hit an API that has no lifetime
+                  field. Degrade to the windowed rows instead of blowing up. */}
+              {(data.botLegsLifetime ?? data.botLegs).length === 0
                 ? <Empty>No bot legs have reported trades yet.</Empty>
-                : <LegTable legs={data.botLegs} privacy={privacy} />}
+                : <LegTable
+                    legs={data.botLegs}
+                    lifetime={data.botLegsLifetime ?? data.botLegs}
+                    days={data.rangeDays}
+                    privacy={privacy}
+                  />}
             </div>
           </Section>
 
-          {/* ── Recent bot trades ── */}
+          {/* ── Recent bot trades ──
+              "resolved", not "in range": the list is windowed by EXIT time, so
+              a trade here can carry an entry date older than the range start. */}
           {data.botTrades.length > 0 && (
-            <Section title="Recent bot trades" sub={`${data.botTrades.length} in range`}>
+            <Section title="Recent bot trades" sub={`${data.botTrades.length} resolved in the last ${data.rangeDays}d`}>
               <div style={card}><TradeTable trades={data.botTrades.slice(-25).reverse()} privacy={privacy} /></div>
             </Section>
           )}
@@ -404,23 +417,85 @@ function ExitPlanCell({ plan }: { plan: FuturesExitPlan | null }) {
   );
 }
 
-function LegTable({ legs, privacy }: { legs: FuturesBotLegStats[]; privacy: boolean }) {
+/** Two-line cell: windowed value on top, lifetime underneath in muted small. */
+function Dual({ top, bottom, topColor }: { top: React.ReactNode; bottom: React.ReactNode; topColor?: string }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 1, lineHeight: 1.3 }}>
+      <span style={topColor ? { color: topColor } : undefined}>{top}</span>
+      <span style={{ color: MUTED, fontSize: 11 }}>{bottom}</span>
+    </div>
+  );
+}
+
+/** Header cell carrying the "{n}d / life" legend for the dual columns. */
+function DualTh({ label, days }: { label: string; days: number }) {
+  return (
+    <th style={th}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 1, lineHeight: 1.3 }}>
+        <span>{label}</span>
+        <span style={{ color: MUTED, fontWeight: 400, fontSize: 10 }}>{days}d / life</span>
+      </div>
+    </th>
+  );
+}
+
+function LegTable({ legs, lifetime, days, privacy }: {
+  legs: FuturesBotLegStats[];
+  lifetime: FuturesBotLegStats[];
+  days: number;
+  privacy: boolean;
+}) {
+  // Rows come from LIFETIME, which is a superset: a leg with no trade resolved
+  // inside the window has no windowed row at all, and iterating `legs` would
+  // make it vanish from the table entirely rather than show as a quiet 0.
+  const byRange = new Map(legs.map((l) => [l.source, l]));
   return (
     <table style={tbl}>
-      <thead><tr>{['Leg', 'Strategy', 'Trades', 'Win rate', 'Net PnL', 'Equity', 'State', 'Open exit (SL/TP · trigger)'].map((h) => <th key={h} style={th}>{h}</th>)}</tr></thead>
+      <thead>
+        <tr>
+          {['Leg', 'Strategy'].map((h) => <th key={h} style={th}>{h}</th>)}
+          <DualTh label="Trades" days={days} />
+          <DualTh label="Win rate" days={days} />
+          <DualTh label="Net PnL" days={days} />
+          {['Equity', 'State', 'Open exit (SL/TP · trigger)'].map((h) => <th key={h} style={th}>{h}</th>)}
+        </tr>
+      </thead>
       <tbody>
-        {legs.map((l) => (
-          <tr key={l.source}>
-            <td style={td}><b>{l.source.replace('snapback-btc', 'v1').replace('v1-', '')}</b></td>
-            <td style={{ ...td, color: MUTED }}>{l.strategy ?? '—'}</td>
-            <td style={td}>{l.trades}{l.openTrade ? ' +1 open' : ''}</td>
-            <td style={td}>{pct(l.winRatePct)} <span style={{ color: MUTED }}>({l.wins}/{l.wins + l.losses})</span></td>
-            <td style={{ ...td, color: signColor(l.netPnlUsd) }}>{usd(l.netPnlUsd, privacy)}</td>
-            <td style={td}>{usd(l.currentEquityUsd, privacy)}</td>
-            <td style={{ ...td, color: l.isHalted ? DOWN : UP }}>{l.isHalted ? 'HALTED' : 'live'}</td>
-            <td style={td}>{privacy ? '•••' : <ExitPlanCell plan={l.openExit} />}</td>
-          </tr>
-        ))}
+        {lifetime.map((life) => {
+          const r = byRange.get(life.source);
+          return (
+            <tr key={life.source}>
+              <td style={td}><b>{life.source.replace('snapback-btc', 'v1').replace('v1-', '')}</b></td>
+              <td style={{ ...td, color: MUTED }}>{life.strategy ?? '—'}</td>
+              <td style={td}>
+                {/* r.openTrade and life.openTrade are provably identical —
+                    tradesClosedWithin keeps every open trade regardless of
+                    window — but read from the windowed row so the annotation
+                    belongs to the number it sits on. */}
+                <Dual
+                  top={<>{r?.trades ?? 0}{(r?.openTrade ?? life.openTrade) ? ' +1 open' : ''}</>}
+                  bottom={`${life.trades} lifetime`}
+                />
+              </td>
+              <td style={td}>
+                <Dual
+                  top={<>{pct(r?.winRatePct ?? null)}{r ? <span style={{ color: MUTED }}> ({r.wins}/{r.wins + r.losses})</span> : null}</>}
+                  bottom={<>{pct(life.winRatePct)} ({life.wins}/{life.wins + life.losses})</>}
+                />
+              </td>
+              <td style={td}>
+                <Dual
+                  top={usd(r?.netPnlUsd ?? 0, privacy)}
+                  topColor={signColor(r?.netPnlUsd ?? 0)}
+                  bottom={usd(life.netPnlUsd, privacy)}
+                />
+              </td>
+              <td style={td}>{usd(life.currentEquityUsd, privacy)}</td>
+              <td style={{ ...td, color: life.isHalted ? DOWN : UP }}>{life.isHalted ? 'HALTED' : 'live'}</td>
+              <td style={td}>{privacy ? '•••' : <ExitPlanCell plan={life.openExit} />}</td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );

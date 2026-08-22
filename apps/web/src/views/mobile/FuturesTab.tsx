@@ -176,34 +176,47 @@ export function FuturesTab({ privacy }: { privacy: boolean }) {
 
           <ChannelLadderCard privacy={privacy} />
 
-          {/* bot legs */}
+          {/* bot legs — windowed line + lifetime line. Rows come from lifetime
+              (the superset); a leg with nothing resolved in the window would
+              otherwise disappear from the tab entirely. `?? botLegs` covers the
+              brief skew when this page is newer than the deployed API. */}
           <div style={M.section as React.CSSProperties}>Bot legs</div>
-          {data.botLegs.length === 0
+          {(data.botLegsLifetime ?? data.botLegs).length === 0
             ? <div style={M.empty as React.CSSProperties}>No bot legs have reported trades yet.</div>
-            : data.botLegs.map((l) => (
-              <div key={l.source} style={{ ...M.card, marginBottom: 8 }}>
+            : (data.botLegsLifetime ?? data.botLegs).map((life) => {
+              const l = data.botLegs.find((x) => x.source === life.source);
+              return (
+              <div key={life.source} style={{ ...M.card, marginBottom: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ fontWeight: 700 }}>{l.source.replace('snapback-btc-', '').replace('snapback-btc', 'v1')}</span>
-                  <span style={{ color: l.isHalted ? DOWN : UP, fontSize: 11, fontWeight: 600 }}>{l.isHalted ? 'HALTED' : 'live'}</span>
+                  <span style={{ fontWeight: 700 }}>{life.source.replace('snapback-btc-', '').replace('snapback-btc', 'v1')}</span>
+                  <span style={{ color: life.isHalted ? DOWN : UP, fontSize: 11, fontWeight: 600 }}>{life.isHalted ? 'HALTED' : 'live'}</span>
                 </div>
                 <div style={{ fontSize: 12, color: MUTED, marginTop: 4, display: 'flex', gap: 12 }}>
-                  <span>{l.trades} trades</span>
-                  <span>WR {l.winRatePct == null ? '—' : `${l.winRatePct.toFixed(0)}%`}</span>
-                  <span style={{ color: sc(l.netPnlUsd) }}>net {usd(l.netPnlUsd, privacy)}</span>
+                  <span>{l?.trades ?? 0} trades</span>
+                  <span>WR {l?.winRatePct == null ? '—' : `${l.winRatePct.toFixed(0)}%`}</span>
+                  <span style={{ color: sc(l?.netPnlUsd ?? 0) }}>net {usd(l?.netPnlUsd ?? 0, privacy)}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 10 }}>{data.rangeDays}d</span>
                 </div>
-                {l.openExit && !privacy && (
+                <div style={{ fontSize: 11, color: MUTED, marginTop: 2, display: 'flex', gap: 12, opacity: 0.85 }}>
+                  <span>{life.trades} trades</span>
+                  <span>WR {life.winRatePct == null ? '—' : `${life.winRatePct.toFixed(0)}%`}</span>
+                  <span style={{ color: sc(life.netPnlUsd) }}>net {usd(life.netPnlUsd, privacy)}</span>
+                  <span style={{ marginLeft: 'auto', fontSize: 10 }}>lifetime</span>
+                </div>
+                {life.openExit && !privacy && (
                   <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--border)', fontSize: 11, color: MUTED }}>
                     <div style={{ fontFamily: 'var(--mono)' }}>
-                      <span style={{ color: l.openExit.slPriceUsd != null ? DOWN : MUTED }}>SL {l.openExit.slPriceUsd != null ? usd(l.openExit.slPriceUsd) : '—'}</span>
+                      <span style={{ color: life.openExit.slPriceUsd != null ? DOWN : MUTED }}>SL {life.openExit.slPriceUsd != null ? usd(life.openExit.slPriceUsd) : '—'}</span>
                       <span> · </span>
-                      <span style={{ color: l.openExit.tpPriceUsd != null ? UP : MUTED }}>TP {l.openExit.tpPriceUsd != null ? usd(l.openExit.tpPriceUsd) : '—'}</span>
+                      <span style={{ color: life.openExit.tpPriceUsd != null ? UP : MUTED }}>TP {life.openExit.tpPriceUsd != null ? usd(life.openExit.tpPriceUsd) : '—'}</span>
                     </div>
-                    {l.openExit.exitCondition && <div style={{ marginTop: 2 }}>exit: {l.openExit.exitCondition}</div>}
-                    {barsLeftStr(l.openExit) && <div style={{ marginTop: 2 }}>{barsLeftStr(l.openExit)}</div>}
+                    {life.openExit.exitCondition && <div style={{ marginTop: 2 }}>exit: {life.openExit.exitCondition}</div>}
+                    {barsLeftStr(life.openExit) && <div style={{ marginTop: 2 }}>{barsLeftStr(life.openExit)}</div>}
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
         </>
       )}
     </div>

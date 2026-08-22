@@ -27,7 +27,9 @@ import {
 import {
   summarizeIncome,
   pairBotTrades,
+  tradesClosedWithin,
   deriveLegStats,
+  PAIRING_KINDS,
   deriveManualStats,
   reconcileEquity,
   type BotEventLite,
@@ -305,6 +307,11 @@ export async function buildFuturesAnalytics(rangeDays: number): Promise<FuturesA
   const manualTrades = deriveManualStats(incomeLite, positions);
 
   // ── Bot side (from bot_events; always available) ──
+  // Deliberately UNBOUNDED in time: pairing needs the whole history because a
+  // trade's entry and exit can straddle the range boundary (see
+  // tradesClosedWithin). The window is applied to the PAIRED trades below, not
+  // to the events. Cost is negligible — PAIRING_KINDS excludes the high-volume
+  // heartbeat kinds and rides idx_bot_events_kind; a leg emits ~2 rows a trade.
   const evRows = await pool.query<{
     source: string; kind: string; side: 'long' | 'short' | null;
     qty: number | null; price_usd: number | null; notional_usd: number | null;
@@ -314,10 +321,9 @@ export async function buildFuturesAnalytics(rangeDays: number): Promise<FuturesA
     `SELECT source, kind, side, qty, price_usd, notional_usd, equity_usd,
             bot_ts::text, strategy, payload
        FROM bot_events
-      WHERE kind IN ('entry','exit','kill_switch','halt','boot_flatten')
-        AND bot_ts >= $1
+      WHERE kind = ANY($1)
       ORDER BY bot_ts ASC`,
-    [since],
+    [PAIRING_KINDS],
   );
   const events: BotEventLite[] = evRows.rows.map((r) => ({
     source: r.source,
@@ -331,7 +337,9 @@ export async function buildFuturesAnalytics(rangeDays: number): Promise<FuturesA
     strategy: r.strategy,
     payload: r.payload,
   }));
-  const botTrades = pairBotTrades(events, now);
+  // Pair once over all history, then derive both scopes from it.
+  const allBotTrades = pairBotTrades(events, now);
+  const botTrades = tradesClosedWithin(allBotTrades, since);
 
   // Live per-leg state (equity + halted) from bot-status, keyed by source.
   const { rows: srcRows } = await pool.query<{ source: string }>(
@@ -349,6 +357,10 @@ export async function buildFuturesAnalytics(rangeDays: number): Promise<FuturesA
     }),
   );
   const botLegs = deriveLegStats(botTrades, live);
+  // Same roll-up over every trade the leg has ever made. A 30d window can hold
+  // one trade of a leg that signals ~26×/yr, so the range view alone gives no
+  // read on whether a leg is working; lifetime is the denominator that does.
+  const botLegsLifetime = deriveLegStats(allBotTrades, live);
 
   // Bot equity curve from hourly heartbeat snapshots within range.
   const hbRows = await pool.query<{ source: string; bot_ts: string; equity_usd: number | null }>(
@@ -382,6 +394,7 @@ export async function buildFuturesAnalytics(rangeDays: number): Promise<FuturesA
     positions,
     manualTrades,
     botLegs,
+    botLegsLifetime,
     botTrades,
     botEquityCurve,
     reconciliation,

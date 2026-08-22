@@ -421,7 +421,14 @@ export interface FuturesAnalytics {
   positions: FuturesPosition[];        // current open futures positions
   manualTrades: ManualSymbolStats[];   // per-symbol MANUAL (non-bot) activity + live open status
   // ── Bot side (always available from bot_events) ──
+  // Scoped to `rangeDays` — a trade belongs to the window when it CLOSED inside
+  // it (open trades always count). Pairing runs over full history first, so a
+  // trade whose entry predates the window still appears.
   botLegs: FuturesBotLegStats[];
+  // Same shape, every trade the leg has ever made. Legs signal as rarely as
+  // ~26×/yr, so a 30d window can be a single trade — lifetime is the only
+  // honest denominator for win rate.
+  botLegsLifetime: FuturesBotLegStats[];
   botTrades: FuturesBotTrade[];
   botEquityCurve: { ts: number; equityUsd: number; source: string }[];
   // ── Reconciliation (Phase 2; null until built) ──

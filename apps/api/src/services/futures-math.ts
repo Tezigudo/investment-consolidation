@@ -391,6 +391,31 @@ export function pairBotTrades(
   return trades.sort((a, b) => a.entryTs - b.entryTs);
 }
 
+/**
+ * Narrow a PAIRED trade list to a time window: everything that CLOSED inside
+ * it, plus everything still open.
+ *
+ * Why this exists instead of a `bot_ts >= since` in the SQL: pairing must see
+ * the whole history, because a trade's entry and its exit can straddle the
+ * window boundary. Filtering the EVENTS meant a closing event whose entry fell
+ * outside the window hit `CLOSING_KINDS.has(kind) && open` with `open === null`
+ * and was silently dropped — the trade vanished from the range entirely, neither
+ * counted nor listed. Live example (2026-08-22): v1's 07-22 → 07-23 12:47 trade
+ * closed 3h39m INSIDE the 30d window and was invisible, hiding a −$5.39 loss and
+ * flattering the leg's 30d win rate from a true 25% to a displayed 33.3%.
+ *
+ * Window membership is by EXIT time, so "trades in the last 30d" means "trades
+ * resolved in the last 30d" — the only reading under which the win rate and net
+ * PnL for a window are self-consistent. Open trades are always included: they
+ * are current state, not history.
+ */
+export function tradesClosedWithin(
+  trades: FuturesBotTrade[],
+  sinceMs: number,
+): FuturesBotTrade[] {
+  return trades.filter((t) => t.exitTs == null || t.exitTs >= sinceMs);
+}
+
 /** Exit reason as the bot spells it (`reason`), tolerating the legacy
  *  `exit_reason` key. Returns null when neither is a usable string. */
 function exitReasonOf(exit: BotEventLite): string | null {

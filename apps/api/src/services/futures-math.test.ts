@@ -3,6 +3,7 @@ import {
   utcDay,
   summarizeIncome,
   pairBotTrades,
+  tradesClosedWithin,
   deriveLegStats,
   deriveManualStats,
   reconcileEquity,
@@ -309,6 +310,61 @@ describe('deriveLegStats', () => {
     expect(leg.wins).toBe(1);
     expect(leg.losses).toBe(0);       // $0 is NOT a loss
     expect(leg.winRatePct).toBe(100); // 1 win / 1 decided (break-even excluded)
+  });
+});
+
+describe('tradesClosedWithin', () => {
+  // The whole point: pair over full history, THEN window. Filtering the raw
+  // events instead dropped any exit whose entry fell outside the window.
+  const straddler = pairBotTrades([
+    ev({ kind: 'entry', side: 'long', bot_ts_ms: T0, equity_usd: 100 }),
+    ev({ kind: 'exit', bot_ts_ms: T0 + 3 * DAY, equity_usd: 94.61 }),  // −5.39
+  ]);
+
+  it('keeps a trade that entered before the window but closed inside it', () => {
+    const since = T0 + DAY; // window opens AFTER the entry, BEFORE the exit
+    const kept = tradesClosedWithin(straddler, since);
+    expect(kept).toHaveLength(1);
+    expect(kept[0].entryTs).toBeLessThan(since);
+    expect(kept[0].pnlUsd).toBe(-5.39);
+  });
+
+  it('drops a trade that closed before the window opened', () => {
+    expect(tradesClosedWithin(straddler, T0 + 10 * DAY)).toHaveLength(0);
+  });
+
+  it('always keeps open trades, however old the entry', () => {
+    const open = pairBotTrades([
+      ev({ kind: 'entry', side: 'long', bot_ts_ms: T0, equity_usd: 100 }),
+    ]);
+    expect(tradesClosedWithin(open, T0 + 365 * DAY)).toHaveLength(1);
+  });
+
+  it('includes a trade closing exactly on the boundary', () => {
+    expect(tradesClosedWithin(straddler, T0 + 3 * DAY)).toHaveLength(1);
+  });
+
+  // The live 2026-08-22 shape: v1's 07-22→07-23 loss closed inside the 30d
+  // window but was invisible, lifting the displayed win rate from 25% to 33.3%.
+  it('window win rate counts the straddling loss (the reported bug)', () => {
+    const all = pairBotTrades([
+      ev({ kind: 'entry', bot_ts_ms: T0, equity_usd: 100 }),
+      ev({ kind: 'exit', bot_ts_ms: T0 + 2 * DAY, equity_usd: 94.61 }),   // −5.39, straddles
+      ev({ kind: 'entry', bot_ts_ms: T0 + 3 * DAY, equity_usd: 94.61 }),
+      ev({ kind: 'exit', bot_ts_ms: T0 + 4 * DAY, equity_usd: 89.61 }),   // −5.00
+      ev({ kind: 'entry', bot_ts_ms: T0 + 5 * DAY, equity_usd: 89.61 }),
+      ev({ kind: 'exit', bot_ts_ms: T0 + 6 * DAY, equity_usd: 84.27 }),   // −5.34
+      ev({ kind: 'entry', bot_ts_ms: T0 + 7 * DAY, equity_usd: 84.27 }),
+      ev({ kind: 'exit', bot_ts_ms: T0 + 8 * DAY, equity_usd: 84.48 }),   // +0.21
+    ]);
+    const [windowed] = deriveLegStats(tradesClosedWithin(all, T0 + DAY), new Map());
+    expect(windowed.trades).toBe(4);       // was 3 — the straddler was lost
+    expect(windowed.winRatePct).toBe(25);  // was 33.3 — flattered by the drop
+    expect(windowed.netPnlUsd).toBe(-15.52);
+
+    const [life] = deriveLegStats(all, new Map());
+    expect(life.trades).toBe(4);
+    expect(life.winRatePct).toBe(25);
   });
 });
 

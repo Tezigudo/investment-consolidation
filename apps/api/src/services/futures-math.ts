@@ -359,6 +359,15 @@ function computeExitPlan(
  * PnL preference: equity delta (entry.equity → exit.equity) captures fees and
  * is the bot's own ground truth; falls back to price-move × qty when equity
  * isn't on the events.
+ *
+ * An entry that a LATER entry supersedes without any exit in between is marked
+ * `unresolved` rather than left looking open. The bot only ever holds one
+ * position per leg, so a second entry proves the first one closed — the exit
+ * event just never arrived. Live example (2026-08-22): v1's bracket SL filled
+ * at 08-23 05:14:30 and the bot re-entered at 05:14:31, inside one 5s poll, so
+ * its open→flat edge detector never saw flat and pushed no exit. The dangling
+ * entry then rendered as an open position with a live SL/TP and a bars-left
+ * countdown for days after the leg went flat.
  */
 export function pairBotTrades(
   events: BotEventLite[],
@@ -377,9 +386,10 @@ export function pairBotTrades(
     let open: BotEventLite | null = null;
     for (const e of sorted) {
       if (e.kind === 'entry') {
-        // A new entry while one is open shouldn't happen (1-position rule),
-        // but if it does, close the prior as open-unresolved and start fresh.
-        if (open) trades.push(makeTrade(source, open, null, nowMs));
+        // A new entry while one is open means the prior position closed
+        // without its exit event reaching us (1-position rule per leg). Flag
+        // it unresolved so nothing downstream mistakes it for a live position.
+        if (open) trades.push(makeTrade(source, open, null, nowMs, true));
         open = e;
       } else if (CLOSING_KINDS.has(e.kind) && open) {
         trades.push(makeTrade(source, open, e, nowMs));
@@ -408,12 +418,21 @@ export function pairBotTrades(
  * resolved in the last 30d" — the only reading under which the win rate and net
  * PnL for a window are self-consistent. Open trades are always included: they
  * are current state, not history.
+ *
+ * An UNRESOLVED entry is neither. It has no exit time to window by and it is
+ * not current state, so blanket-including it (the "always include exitTs==null"
+ * rule) pinned a months-old dangling entry into the 7d view forever. It windows
+ * by ENTRY time instead — the only timestamp it has — so it stays visible while
+ * recent, then ages out like the closed trade it actually is.
  */
 export function tradesClosedWithin(
   trades: FuturesBotTrade[],
   sinceMs: number,
 ): FuturesBotTrade[] {
-  return trades.filter((t) => t.exitTs == null || t.exitTs >= sinceMs);
+  return trades.filter((t) => {
+    if (t.exitTs != null) return t.exitTs >= sinceMs;
+    return t.unresolved ? t.entryTs >= sinceMs : true;
+  });
 }
 
 /** Exit reason as the bot spells it (`reason`), tolerating the legacy
@@ -431,6 +450,7 @@ function makeTrade(
   entry: BotEventLite,
   exit: BotEventLite | null,
   nowMs: number,
+  unresolved = false,
 ): FuturesBotTrade {
   const side = entry.side ?? null;
   const entryPrice = finiteOrNull(entry.price_usd);
@@ -468,8 +488,11 @@ function makeTrade(
     // the test fixtures used the wrong key too, so nothing caught it.
     // `exit_reason` is kept as a fallback so any older row still resolves.
     exitReason: exit ? (exitReasonOf(exit) ?? exit.kind) : null,
-    // Pending exit only exists while the trade is open.
-    exitPlan: exit ? null : computeExitPlan(entry, side, entryPrice, nowMs),
+    // Pending exit only exists while the trade is genuinely open. An
+    // unresolved entry has no position behind it, so an SL/TP and a
+    // bars-left countdown would be pure fiction.
+    exitPlan: exit || unresolved ? null : computeExitPlan(entry, side, entryPrice, nowMs),
+    unresolved,
   };
 }
 
@@ -502,6 +525,12 @@ export function deriveLegStats(
     const losses = scored.filter((t) => t.pnlUsd < 0).length;
     const netPnlUsd = round2(scored.reduce((s, t) => s + t.pnlUsd, 0));
     const l = live.get(source);
+    // "No exit event" splits two ways: a genuinely open position, and an entry
+    // a later entry superseded (the exit never arrived). Only the first is
+    // state. Take the LATEST open one — `ts` is in entryTs order, and an old
+    // dangler used to win `.find()` and hand the leg a stale exit plan.
+    const openTrades = ts.filter((t) => t.exitTs == null && !t.unresolved);
+    const currentOpen = openTrades.length ? openTrades[openTrades.length - 1] : null;
     out.push({
       source,
       strategy: ts.find((t) => t.strategy)?.strategy ?? null,
@@ -514,8 +543,9 @@ export function deriveLegStats(
       netPnlUsd,
       currentEquityUsd: l?.currentEquityUsd ?? null,
       isHalted: l?.isHalted ?? false,
-      openTrade: ts.some((t) => t.exitTs == null),
-      openExit: ts.find((t) => t.exitTs == null)?.exitPlan ?? null,
+      openTrade: currentOpen != null,
+      openExit: currentOpen?.exitPlan ?? null,
+      unresolvedTrades: ts.filter((t) => t.unresolved).length,
     });
   }
   return out.sort((a, b) => a.source.localeCompare(b.source));

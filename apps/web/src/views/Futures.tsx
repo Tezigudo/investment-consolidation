@@ -37,6 +37,8 @@ const RANGES = [
 const UP = 'var(--up, #3fb950)';
 const DOWN = 'var(--down, #f85149)';
 const MUTED = 'var(--muted, #8b949e)';
+// Data defect, not a market direction — deliberately neither UP nor DOWN.
+const WARN = 'var(--warn, #d29922)';
 
 function usd(v: number | null | undefined, privacy = false): string {
   if (privacy) return '•••';
@@ -469,12 +471,25 @@ function LegTable({ legs, lifetime, days, privacy }: {
               <td style={{ ...td, color: MUTED }}>{life.strategy ?? '—'}</td>
               <td style={td}>
                 {/* r.openTrade and life.openTrade are provably identical —
-                    tradesClosedWithin keeps every open trade regardless of
-                    window — but read from the windowed row so the annotation
-                    belongs to the number it sits on. */}
+                    tradesClosedWithin keeps every genuinely open trade
+                    regardless of window — but read from the windowed row so
+                    the annotation belongs to the number it sits on.
+                    unresolvedTrades is NOT identical across the two (an
+                    unresolved entry windows by entry time), so it rides the
+                    lifetime line: a hole in the ledger is a lifetime fact. */}
                 <Dual
                   top={<>{r?.trades ?? 0}{(r?.openTrade ?? life.openTrade) ? ' +1 open' : ''}</>}
-                  bottom={`${life.trades} lifetime`}
+                  bottom={<>
+                    {life.trades} lifetime
+                    {life.unresolvedTrades > 0 && (
+                      <span
+                        style={{ color: WARN }}
+                        title="Entry with no exit event: the position closed but the bot never pushed the exit, so this trade's PnL is missing from every figure on this row."
+                      >
+                        {' '}· {life.unresolvedTrades} unresolved
+                      </span>
+                    )}
+                  </>}
                 />
               </td>
               <td style={td}>
@@ -511,9 +526,15 @@ function TradeTable({ trades, privacy }: { trades: FuturesBotTrade[]; privacy: b
             <td style={{ ...td, color: MUTED }}>{t.source.replace('snapback-btc-', '').replace('snapback-btc', 'v1')}</td>
             <td style={{ ...td, color: t.side === 'short' ? DOWN : UP }}>{t.side ?? '—'}</td>
             <td style={td}>{fmtTs(t.entryTs)}</td>
-            <td style={td}>{t.exitTs ? fmtTs(t.exitTs) : <span style={{ color: MUTED }}>open</span>}</td>
+            <td style={td}>
+              {t.exitTs
+                ? fmtTs(t.exitTs)
+                : t.unresolved
+                  ? <span style={{ color: WARN }} title="The bot never pushed an exit for this entry; a later entry proves the position closed. Its PnL is unknown and excluded from the leg's stats.">unresolved</span>
+                  : <span style={{ color: MUTED }}>open</span>}
+            </td>
             <td style={{ ...td, color: signColor(t.pnlUsd) }}>{t.pnlUsd == null ? '—' : usd(t.pnlUsd, privacy)}</td>
-            <td style={{ ...td, color: MUTED }}>{t.exitReason ?? '—'}</td>
+            <td style={{ ...td, color: MUTED }}>{t.exitReason ?? (t.unresolved ? 'exit not reported' : '—')}</td>
           </tr>
         ))}
       </tbody>

@@ -25,7 +25,7 @@ import type {
   FuturesExitPlan,
   ManualSymbolStats,
 } from '@consolidate/shared';
-import { splitRealizedBySymbol, isBotSymbol } from '@consolidate/shared';
+import { splitRealizedBySymbol, isBotSymbol, isOpenPosition } from '@consolidate/shared';
 
 const RANGES = [
   { label: '7D', days: 7 },
@@ -276,10 +276,13 @@ export function Futures({ privacy }: Props) {
           </Section>
 
           {/* ── Recent bot trades ──
-              "resolved", not "in range": the list is windowed by EXIT time, so
-              a trade here can carry an entry date older than the range start. */}
+              Windowed by EXIT time, not entry, so a row here can carry an entry
+              date older than the range start. The count makes no claim beyond
+              "in range": the list also holds trades still open and UNRESOLVED
+              entries, so the old "N resolved" contradicted the "unresolved"
+              label on the very rows beneath it. */}
           {data.botTrades.length > 0 && (
-            <Section title="Recent bot trades" sub={`${data.botTrades.length} resolved in the last ${data.rangeDays}d`}>
+            <Section title="Recent bot trades" sub={`${data.botTrades.length} in the last ${data.rangeDays}d`}>
               <div style={card}><TradeTable trades={data.botTrades.slice(-25).reverse()} privacy={privacy} /></div>
             </Section>
           )}
@@ -527,11 +530,13 @@ function TradeTable({ trades, privacy }: { trades: FuturesBotTrade[]; privacy: b
             <td style={{ ...td, color: t.side === 'short' ? DOWN : UP }}>{t.side ?? '—'}</td>
             <td style={td}>{fmtTs(t.entryTs)}</td>
             <td style={td}>
-              {t.exitTs
+              {/* isOpenPosition, not a hand-written exitTs check — same
+                  predicate the API uses, so the two can't drift. */}
+              {t.exitTs != null
                 ? fmtTs(t.exitTs)
-                : t.unresolved
-                  ? <span style={{ color: WARN }} title="The bot never pushed an exit for this entry; a later entry proves the position closed. Its PnL is unknown and excluded from the leg's stats.">unresolved</span>
-                  : <span style={{ color: MUTED }}>open</span>}
+                : isOpenPosition(t)
+                  ? <span style={{ color: MUTED }}>open</span>
+                  : <span style={{ color: WARN }} title="The bot never pushed an exit for this entry; a later entry proves the position closed. Its PnL is unknown and excluded from the leg's stats.">unresolved</span>}
             </td>
             <td style={{ ...td, color: signColor(t.pnlUsd) }}>{t.pnlUsd == null ? '—' : usd(t.pnlUsd, privacy)}</td>
             <td style={{ ...td, color: MUTED }}>{t.exitReason ?? (t.unresolved ? 'exit not reported' : '—')}</td>

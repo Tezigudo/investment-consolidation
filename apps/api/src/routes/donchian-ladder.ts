@@ -22,6 +22,7 @@ import { binanceFuturesPublicGet } from '../services/binance-http.js';
 import {
   pairBotTrades,
   strategyMeta,
+  isOpenPosition,
   PAIRING_KINDS,
   type BotEventLite,
 } from '../services/futures-math.js';
@@ -81,10 +82,12 @@ async function openChannelTrade(): Promise<FuturesBotTrade | null> {
     payload: r.payload,
   }));
 
-  // An OPEN trade is one pairBotTrades left without an exit. Only legs whose
-  // strategy declares a channel period have a trailing level to draw at all.
+  // Only legs whose strategy declares a channel period have a trailing level to
+  // draw at all. `isOpenPosition`, not a bare exitTs check: an entry whose exit
+  // the bot dropped also has exitTs == null, and drawing a live trailing ladder
+  // over a position that already closed is worse than drawing nothing.
   const open = pairBotTrades(events, Date.now()).filter(
-    (t) => t.exitTs == null && strategyMeta(t.strategy)?.channelExitPeriod != null,
+    (t) => isOpenPosition(t) && strategyMeta(t.strategy)?.channelExitPeriod != null,
   );
   // Newest wins if two legs are somehow open — the ladder is per-position.
   open.sort((a, b) => b.entryTs - a.entryTs);

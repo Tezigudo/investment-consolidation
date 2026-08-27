@@ -16,6 +16,9 @@ export function themeVars(dark: boolean): CSSProperties {
       '--up-bg': 'color-mix(in oklab, oklch(0.82 0.19 145) 16%, transparent)',
       '--down': 'oklch(0.72 0.19 25)',
       '--down-bg': 'color-mix(in oklab, oklch(0.72 0.19 25) 16%, transparent)',
+      // Data defect (an unresolved trade), not a market direction — amber so it
+      // reads as "look at this" without borrowing --down's "you lost money".
+      '--warn': 'oklch(0.80 0.15 85)',
       '--mono': '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
       '--ui': '"Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
     } as CSSProperties;
@@ -34,6 +37,9 @@ export function themeVars(dark: boolean): CSSProperties {
     '--up-bg': 'color-mix(in oklab, oklch(0.52 0.19 145) 14%, transparent)',
     '--down': 'oklch(0.58 0.22 25)',
     '--down-bg': 'color-mix(in oklab, oklch(0.58 0.22 25) 14%, transparent)',
+    // Darkened for the light theme, exactly like --up/--down: the dark amber is
+    // unreadable on #faf9f6, and this annotation's whole job is to be noticed.
+    '--warn': 'oklch(0.55 0.13 75)',
     '--mono': '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
     '--ui': '"Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif',
   } as CSSProperties;

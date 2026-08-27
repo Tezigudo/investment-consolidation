@@ -9,7 +9,7 @@
 import { describe, it, expect } from 'vitest';
 import fixture from './__fixtures__/donchian-channel.json';
 import { buildChannelLadder, channelLevel, channelLevelSeries, ladderSide } from './donchian-ladder.js';
-import { PAIRING_KINDS, pairBotTrades, type BotEventLite } from './futures-math.js';
+import { PAIRING_KINDS, pairBotTrades, isOpenPosition, type BotEventLite } from './futures-math.js';
 
 const BAR_MS = 4 * 60 * 60_000;
 const closes: number[] = fixture.bars.map((b) => b.close);
@@ -151,7 +151,21 @@ describe('PAIRING_KINDS covers everything pairBotTrades acts on', () => {
   it('an entry with no closing event stays open — what the ladder keys off', () => {
     const trades = pairBotTrades([ev('entry', 1_000)], 3_000);
     expect(trades).toHaveLength(1);
-    expect(trades[0].exitTs).toBeNull();
+    // isOpenPosition, not exitTs: the route stopped keying off a bare null
+    // check, and asserting the old one here would stay green while the ladder
+    // drew over a closed position again.
+    expect(isOpenPosition(trades[0])).toBe(true);
+  });
+
+  // The other half of that predicate. A dropped exit ALSO leaves exitTs null,
+  // so the check the route abandoned would have called this open and drawn a
+  // trailing ladder over a position that had already closed.
+  it('an entry superseded without an exit is NOT what the ladder keys off', () => {
+    const trades = pairBotTrades([ev('entry', 1_000), ev('entry', 2_000)], 3_000);
+    expect(trades).toHaveLength(2);
+    const [orphan] = trades;
+    expect(orphan.exitTs).toBeNull();          // the trap the old check fell into
+    expect(isOpenPosition(orphan)).toBe(false);
   });
 });
 

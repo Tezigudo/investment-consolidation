@@ -356,7 +356,7 @@ export interface FuturesBotTrade {
   strategy: string | null;
   side: 'long' | 'short' | null;
   entryTs: number;
-  exitTs: number | null;       // null = still open
+  exitTs: number | null;       // null = no exit event (open OR unresolved — see below)
   entryPriceUsd: number | null;
   exitPriceUsd: number | null;
   qty: number | null;
@@ -364,6 +364,43 @@ export interface FuturesBotTrade {
   pnlUsd: number | null;       // equity-delta if available, else price move × qty
   exitReason: string | null;
   exitPlan: FuturesExitPlan | null;  // pending exit (open trades only; null once closed)
+  /**
+   * True when this entry was superseded by a LATER entry on the same leg with
+   * no exit in between — the position closed on the exchange but the bot never
+   * pushed the exit event, so this trade can never be resolved.
+   *
+   * `exitTs == null` alone does NOT mean "open", it means "no exit event".
+   * Only `exitTs == null && !unresolved` is a genuinely open position. Callers
+   * that conflate the two render a phantom open trade forever.
+   */
+  unresolved: boolean;
+  /**
+   * When `unresolved`, the bot_ts of the entry that superseded this one — the
+   * moment we can prove the position was already closed, and therefore the
+   * tightest upper bound available on its real exit time. null otherwise.
+   *
+   * Windowing an unresolved trade by `entryTs` instead would re-create the very
+   * bug tradesClosedWithin exists to fix: a leg signalling ~26×/yr can carry an
+   * orphan whose entry is a month older than the window but which actually
+   * closed inside it, so the range would hide a hole that opened days ago.
+   */
+  supersededAtMs: number | null;
+}
+
+/**
+ * Is this trade a position the leg is holding RIGHT NOW?
+ *
+ * The one place that answer is spelled out, and it lives here — next to the
+ * interface it interprets — because both apps need it. `exitTs == null` is NOT
+ * the test: that means "no exit event arrived", which covers both a live
+ * position and an entry whose exit the bot dropped (see pairBotTrades).
+ *
+ * Every consumer that needs "currently open" must route through this. The same
+ * predicate written out by hand in two places is how the donchian-ladder route
+ * came to draw a trailing ladder over a position that had already closed.
+ */
+export function isOpenPosition(t: FuturesBotTrade): boolean {
+  return t.exitTs == null && !t.unresolved;
 }
 
 export interface FuturesBotLegStats {
@@ -376,11 +413,17 @@ export interface FuturesBotLegStats {
   netPnlUsd: number;
   currentEquityUsd: number | null;
   isHalted: boolean;
-  openTrade: boolean;          // an entry without a matching exit
+  openTrade: boolean;          // a GENUINELY open position (unresolved entries excluded)
   // The open trade's pending exit (SL/TP + condition + bars-left), carried on
   // the leg so per-leg SL/TP/exit is displayable without the account position
   // row (which can't be leg-attributed — see FuturesPosition). null when flat.
   openExit: FuturesExitPlan | null;
+  /**
+   * Entries on this leg that were superseded without an exit ever arriving —
+   * holes in the attribution ledger, not open positions. Surfaced so a missing
+   * exit is visible as a defect instead of silently vanishing from the table.
+   */
+  unresolvedTrades: number;
 }
 
 /** Per-symbol rollup of MANUAL (non-bot) futures activity on the account — the

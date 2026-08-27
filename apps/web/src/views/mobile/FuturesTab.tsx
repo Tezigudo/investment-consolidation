@@ -13,6 +13,8 @@ import { splitRealizedBySymbol, isBotSymbol } from '@consolidate/shared';
 const UP = 'var(--up, #3fb950)';
 const DOWN = 'var(--down, #f85149)';
 const MUTED = 'var(--muted)';
+// Data defect, not a market direction — deliberately neither UP nor DOWN.
+const WARN = 'var(--warn, #d29922)';
 
 function barsLeftStr(plan: FuturesExitPlan): string | null {
   if (plan.barsLeft == null || plan.barMs == null || plan.maxHoldBars == null) return null;
@@ -203,6 +205,14 @@ export function FuturesTab({ privacy }: { privacy: boolean }) {
                   <span style={{ color: sc(life.netPnlUsd) }}>net {usd(life.netPnlUsd, privacy)}</span>
                   <span style={{ marginLeft: 'auto', fontSize: 10 }}>lifetime</span>
                 </div>
+                {/* An entry whose exit event never arrived. Not an open
+                    position, and its PnL is missing from every figure above —
+                    say so rather than let the row read as complete. */}
+                {life.unresolvedTrades > 0 && (
+                  <div style={{ fontSize: 11, color: WARN, marginTop: 2 }}>
+                    {life.unresolvedTrades} unresolved (exit never reported)
+                  </div>
+                )}
                 {life.openExit && !privacy && (
                   <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--border)', fontSize: 11, color: MUTED }}>
                     <div style={{ fontFamily: 'var(--mono)' }}>

@@ -4,7 +4,9 @@ import {
   summarizeIncome,
   pairBotTrades,
   tradesClosedWithin,
+  isOpenPosition,
   deriveLegStats,
+  strategyMeta,
   deriveManualStats,
   reconcileEquity,
   type IncomeRow,
@@ -251,6 +253,33 @@ describe('pairBotTrades', () => {
     ]);
     expect(trades[0].exitTs).toBeNull();
     expect(trades[0].pnlUsd).toBeNull();
+    expect(trades[0].unresolved).toBe(false);
+  });
+
+  // Regression (live, 2026-08-22): v1's bracket SL filled at 08-23 05:14:30 and
+  // the bot re-entered at 05:14:31 — inside one 5s poll, so its open→flat edge
+  // detector never saw flat and pushed no exit. The dangling entry then read as
+  // an open position, complete with SL/TP and a bars-left countdown, for days
+  // after the leg had gone flat.
+  it('an entry superseded by a later entry is unresolved, not open', () => {
+    const trades = pairBotTrades([
+      ev({ kind: 'entry', side: 'long', bot_ts_ms: T0, price_usd: 77310.9, qty: 0.004, strategy: 'multifactor-v1', equity_usd: 147.32 }),
+      // no exit here — the SL filled on the exchange and the bot never pushed it
+      ev({ kind: 'entry', side: 'long', bot_ts_ms: T0 + DAY, price_usd: 76122.8, qty: 0.004, strategy: 'multifactor-v1', equity_usd: 141.87 }),
+      ev({ kind: 'exit', bot_ts_ms: T0 + DAY + 41_000, price_usd: 76003.1, equity_usd: 140.83, payload: { reason: 'trend_exit' } }),
+    ]);
+    expect(trades).toHaveLength(2);
+
+    const [orphan, closed] = trades;
+    expect(orphan.unresolved).toBe(true);
+    expect(orphan.exitTs).toBeNull();
+    expect(orphan.pnlUsd).toBeNull();
+    // The phantom the dashboard rendered: an SL/TP and a countdown for a
+    // position that no longer existed.
+    expect(orphan.exitPlan).toBeNull();
+
+    expect(closed.unresolved).toBe(false);
+    expect(closed.exitReason).toBe('trend_exit');
   });
 
   it('kill_switch and halt close an open trade', () => {
@@ -276,6 +305,50 @@ describe('pairBotTrades', () => {
   });
 });
 
+describe('isOpenPosition', () => {
+  // Built per-test, with an explicit nowMs: at describe scope with the default
+  // Date.now() the surviving trade's exitPlan countdown drifts with wall clock,
+  // and the array would be shared across siblings.
+  const channelTrades = () => pairBotTrades([
+    ev({ source: 'd', strategy: 'donchian-v3', kind: 'entry', side: 'long', bot_ts_ms: T0, price_usd: 72645.5, qty: 0.003 }),
+    // exit dropped — the next entry is the only proof it closed
+    ev({ source: 'd', strategy: 'donchian-v3', kind: 'entry', side: 'long', bot_ts_ms: T0 + DAY, price_usd: 78311, qty: 0.002 }),
+    ev({ source: 'd', kind: 'exit', bot_ts_ms: T0 + 2 * DAY, price_usd: 78893.8, payload: { reason: 'channel_exit' } }),
+  ], T0 + 3 * DAY);
+
+  it('an unresolved entry is not an open position, though exitTs is null', () => {
+    const [orphan, closed] = channelTrades();
+    expect(orphan.exitTs).toBeNull();      // the trap
+    expect(isOpenPosition(orphan)).toBe(false);
+    expect(isOpenPosition(closed)).toBe(false);
+  });
+
+  it('a genuinely open trade is', () => {
+    const [open] = pairBotTrades([
+      ev({ source: 'd', strategy: 'donchian-v3', kind: 'entry', side: 'long', bot_ts_ms: T0 }),
+    ], T0 + DAY);
+    expect(isOpenPosition(open)).toBe(true);
+    expect(open.supersededAtMs).toBeNull();
+  });
+
+  // The donchian-ladder route picks the newest channel-exit trade still open and
+  // draws a trailing ladder on it. Filtering `exitTs == null` handed it a closed
+  // position whenever the leg's exit event was dropped.
+  it('leaves the ladder route no channel trade once the orphan is excluded', () => {
+    const trades = channelTrades();
+    const live = trades.filter(
+      (t) => isOpenPosition(t) && strategyMeta(t.strategy)?.channelExitPeriod != null,
+    );
+    expect(live).toHaveLength(0);
+    // ...and the bare check it replaced would have drawn the stale one.
+    const naive = trades.filter(
+      (t) => t.exitTs == null && strategyMeta(t.strategy)?.channelExitPeriod != null,
+    );
+    expect(naive).toHaveLength(1);
+    expect(naive[0].entryPriceUsd).toBe(72645.5);
+  });
+});
+
 describe('deriveLegStats', () => {
   it('computes win rate, net pnl, and merges live equity/halt', () => {
     const trades = pairBotTrades([
@@ -296,6 +369,39 @@ describe('deriveLegStats', () => {
     expect(leg.currentEquityUsd).toBe(105);
     expect(leg.isHalted).toBe(true);
     expect(leg.strategy).toBe('cnh');
+    expect(leg.unresolvedTrades).toBe(0);
+  });
+
+  // The live v1 symptom: leg flat on the exchange, dashboard showing an open
+  // trade with a live SL/TP and a 431-bar countdown, sourced from a dangling
+  // 08-22 entry whose exit was never pushed.
+  it('an unresolved entry is NOT an open trade', () => {
+    const trades = pairBotTrades([
+      ev({ source: 'v1', strategy: 'multifactor-v1', kind: 'entry', side: 'long', bot_ts_ms: T0, price_usd: 77310.9, qty: 0.004, equity_usd: 147.32 }),
+      // exit never arrived; the next entry proves it closed
+      ev({ source: 'v1', strategy: 'multifactor-v1', kind: 'entry', side: 'long', bot_ts_ms: T0 + DAY, price_usd: 76122.8, qty: 0.004, equity_usd: 141.87 }),
+      ev({ source: 'v1', kind: 'exit', bot_ts_ms: T0 + DAY + 41_000, price_usd: 76003.1, equity_usd: 140.83, payload: { reason: 'trend_exit' } }),
+    ]);
+    const [leg] = deriveLegStats(trades, new Map([['v1', { currentEquityUsd: 137.68, isHalted: false }]]));
+    expect(leg.openTrade).toBe(false);
+    expect(leg.openExit).toBeNull();
+    expect(leg.unresolvedTrades).toBe(1);
+    expect(leg.trades).toBe(1);   // only the one that actually resolved
+  });
+
+  // `.find()` returned the OLDEST no-exit trade, so a stale dangler outranked a
+  // genuinely open position and handed the leg the wrong exit plan.
+  it('openExit comes from the latest open trade, not an older dangler', () => {
+    const trades = pairBotTrades([
+      // superseded, no exit
+      ev({ source: 'v1', strategy: 'multifactor-v1', kind: 'entry', side: 'long', bot_ts_ms: T0, price_usd: 77310.9, qty: 0.004, payload: { sl_price: 76151.24 } }),
+      ev({ source: 'v1', strategy: 'multifactor-v1', kind: 'entry', side: 'long', bot_ts_ms: T0 + DAY, price_usd: 60000, qty: 0.004, payload: { sl_price: 59100 } }),
+    ]);
+    const [leg] = deriveLegStats(trades, new Map());
+    expect(leg.openTrade).toBe(true);
+    expect(leg.unresolvedTrades).toBe(1);
+    // The plan must come from the live entry, not the stale one .find() used to hit.
+    expect(leg.openExit?.slPriceUsd).toBe(59100);
   });
 
   it('a break-even ($0) trade is neither a win nor a loss', () => {
@@ -342,6 +448,41 @@ describe('tradesClosedWithin', () => {
 
   it('includes a trade closing exactly on the boundary', () => {
     expect(tradesClosedWithin(straddler, T0 + 3 * DAY)).toHaveLength(1);
+  });
+
+  // An unresolved entry is not current state, so the blanket "always keep
+  // exitTs==null" rule pinned it into every window forever. It windows by
+  // supersededAtMs — the moment the position is provably already closed.
+  it('windows an unresolved entry by when it was superseded, not forever', () => {
+    const withOrphan = pairBotTrades([
+      ev({ kind: 'entry', side: 'long', bot_ts_ms: T0, equity_usd: 100 }),           // orphaned
+      ev({ kind: 'entry', side: 'long', bot_ts_ms: T0 + 30 * DAY, equity_usd: 94 }), // still open
+    ]);
+    expect(withOrphan.map((t) => t.unresolved)).toEqual([true, false]);
+    expect(withOrphan[0].supersededAtMs).toBe(T0 + 30 * DAY);
+
+    // Window opens before the orphan was superseded → both present.
+    expect(tradesClosedWithin(withOrphan, T0 + 29 * DAY)).toHaveLength(2);
+    // Window opens after → only the genuinely open trade survives.
+    const later = tradesClosedWithin(withOrphan, T0 + 31 * DAY);
+    expect(later).toHaveLength(1);
+    expect(later[0].unresolved).toBe(false);
+  });
+
+  // The regression the entry-time version would have shipped: a leg signalling
+  // ~26x/yr carries an orphan entered a MONTH before the window that in fact
+  // closed inside it. Windowing on entryTs drops the row and hides a hole in
+  // the ledger that opened days ago — the same "closed inside the window but
+  // invisible" failure this whole function exists to fix.
+  it('keeps an orphan entered before the window but superseded inside it', () => {
+    const [orphan] = pairBotTrades([
+      ev({ kind: 'entry', side: 'long', bot_ts_ms: T0, equity_usd: 100 }),
+      ev({ kind: 'entry', side: 'long', bot_ts_ms: T0 + 35 * DAY, equity_usd: 94 }),
+    ]);
+    const since = T0 + 28 * DAY;              // 7d window ending ~T0+35d
+    expect(orphan.entryTs).toBeLessThan(since);      // entry is outside it
+    expect(orphan.supersededAtMs!).toBeGreaterThan(since); // the close is not
+    expect(tradesClosedWithin([orphan], since)).toHaveLength(1);
   });
 
   // The live 2026-08-22 shape: v1's 07-22→07-23 loss closed inside the 30d

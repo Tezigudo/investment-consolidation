@@ -4,7 +4,9 @@ import {
   summarizeIncome,
   pairBotTrades,
   tradesClosedWithin,
+  isOpenPosition,
   deriveLegStats,
+  strategyMeta,
   deriveManualStats,
   reconcileEquity,
   type IncomeRow,
@@ -300,6 +302,45 @@ describe('pairBotTrades', () => {
     expect(trades.map((t) => t.source)).toEqual(['B', 'A']); // sorted by entryTs
     expect(trades[0].pnlUsd).toBe(-10);
     expect(trades[1].pnlUsd).toBe(5);
+  });
+});
+
+describe('isOpenPosition', () => {
+  const trades = pairBotTrades([
+    ev({ source: 'd', strategy: 'donchian-v3', kind: 'entry', side: 'long', bot_ts_ms: T0, price_usd: 72645.5, qty: 0.003 }),
+    // exit dropped — the next entry is the only proof it closed
+    ev({ source: 'd', strategy: 'donchian-v3', kind: 'entry', side: 'long', bot_ts_ms: T0 + DAY, price_usd: 78311, qty: 0.002 }),
+    ev({ source: 'd', kind: 'exit', bot_ts_ms: T0 + 2 * DAY, price_usd: 78893.8, payload: { reason: 'channel_exit' } }),
+  ]);
+
+  it('an unresolved entry is not an open position, though exitTs is null', () => {
+    const [orphan, closed] = trades;
+    expect(orphan.exitTs).toBeNull();      // the trap
+    expect(isOpenPosition(orphan)).toBe(false);
+    expect(isOpenPosition(closed)).toBe(false);
+  });
+
+  it('a genuinely open trade is', () => {
+    const [open] = pairBotTrades([
+      ev({ source: 'd', strategy: 'donchian-v3', kind: 'entry', side: 'long', bot_ts_ms: T0 }),
+    ]);
+    expect(isOpenPosition(open)).toBe(true);
+  });
+
+  // The donchian-ladder route picks the newest channel-exit trade still open and
+  // draws a trailing ladder on it. Filtering `exitTs == null` handed it a closed
+  // position whenever the leg's exit event was dropped.
+  it('leaves the ladder route no channel trade once the orphan is excluded', () => {
+    const live = trades.filter(
+      (t) => isOpenPosition(t) && strategyMeta(t.strategy)?.channelExitPeriod != null,
+    );
+    expect(live).toHaveLength(0);
+    // ...and the bare check it replaced would have drawn the stale one.
+    const naive = trades.filter(
+      (t) => t.exitTs == null && strategyMeta(t.strategy)?.channelExitPeriod != null,
+    );
+    expect(naive).toHaveLength(1);
+    expect(naive[0].entryPriceUsd).toBe(72645.5);
   });
 });
 

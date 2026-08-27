@@ -435,6 +435,20 @@ export function tradesClosedWithin(
   });
 }
 
+/**
+ * Is this trade a position the leg is holding RIGHT NOW?
+ *
+ * The one place that answer is spelled out. `exitTs == null` is not the test —
+ * that means "no exit event arrived", which covers both a live position and an
+ * entry whose exit was dropped (see pairBotTrades). Every consumer that needs
+ * "currently open" must route through here: the same predicate written out by
+ * hand in two places is how the donchian-ladder route came to draw a trailing
+ * ladder over a position that had already closed.
+ */
+export function isOpenPosition(t: FuturesBotTrade): boolean {
+  return t.exitTs == null && !t.unresolved;
+}
+
 /** Exit reason as the bot spells it (`reason`), tolerating the legacy
  *  `exit_reason` key. Returns null when neither is a usable string. */
 function exitReasonOf(exit: BotEventLite): string | null {
@@ -529,7 +543,7 @@ export function deriveLegStats(
     // a later entry superseded (the exit never arrived). Only the first is
     // state. Take the LATEST open one — `ts` is in entryTs order, and an old
     // dangler used to win `.find()` and hand the leg a stale exit plan.
-    const openTrades = ts.filter((t) => t.exitTs == null && !t.unresolved);
+    const openTrades = ts.filter(isOpenPosition);
     const currentOpen = openTrades.length ? openTrades[openTrades.length - 1] : null;
     out.push({
       source,

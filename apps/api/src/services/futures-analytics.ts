@@ -56,13 +56,13 @@ export async function refreshFuturesLive(): Promise<{ skipped: boolean }> {
 
   // Hourly equity snapshot (append-only, throttled like heartbeat_snapshot).
   const { rows: last } = await pool.query<{ ts: string }>(
-    'SELECT ts FROM futures_account_snapshot ORDER BY ts DESC LIMIT 1',
+    "SELECT ts FROM futures_account_snapshot WHERE account = 'main' ORDER BY ts DESC LIMIT 1",
   );
   const lastTs = last.length ? Number(last[0].ts) : 0;
   if (now - lastTs >= SNAPSHOT_INTERVAL_MS) {
     await pool.query(
-      `INSERT INTO futures_account_snapshot (ts, wallet_usd, margin_usd, unrealized_usd, available_usd)
-       VALUES ($1, $2, $3, $4, $5) ON CONFLICT (ts) DO NOTHING`,
+      `INSERT INTO futures_account_snapshot (ts, account, wallet_usd, margin_usd, unrealized_usd, available_usd)
+       VALUES ($1, 'main', $2, $3, $4, $5) ON CONFLICT (account, ts) DO NOTHING`,
       [now, acct.walletBalanceUsd, acct.marginBalanceUsd, acct.unrealizedPnlUsd, acct.availableBalanceUsd],
     );
   }
@@ -123,6 +123,10 @@ export async function syncFuturesIncome(): Promise<{ inserted: number; skipped: 
 // the global hook. Input is already zod-validated by routes/futures.ts.
 
 export interface IngestAccount {
+  // Which Binance (sub-)account this snapshot came from. Optional: a relay that
+  // predates 2026-08-29 sends nothing and is treated as 'main', exactly as it
+  // behaved before the column existed.
+  account?: string;
   walletBalanceUsd: number;
   marginBalanceUsd: number;
   unrealizedPnlUsd: number;
@@ -155,8 +159,13 @@ export interface IngestIncome {
  *  curve only needs hourly granularity, matching the heartbeat_snapshot pattern. */
 export async function ingestFuturesAccountSnapshot(a: IngestAccount): Promise<{ stored: boolean }> {
   const now = Date.now();
+  // Throttle PER ACCOUNT. A global throttle would let whichever relay pushed
+  // first each hour lock the other one out, so v1 would land in the table only
+  // sporadically — a subtler version of the bug this column exists to fix.
+  const account = a.account || 'main';
   const { rows } = await pool.query<{ ts: string }>(
-    'SELECT ts::text FROM futures_account_snapshot ORDER BY ts DESC LIMIT 1',
+    'SELECT ts::text FROM futures_account_snapshot WHERE account = $1 ORDER BY ts DESC LIMIT 1',
+    [account],
   );
   const lastTs = rows.length ? Number(rows[0].ts) : 0;
   // 50min floor (not a strict 60) so an on-the-hour cron never skips its own
@@ -164,9 +173,9 @@ export async function ingestFuturesAccountSnapshot(a: IngestAccount): Promise<{ 
   if (now - lastTs < 50 * 60 * 1000) return { stored: false };
   // Server clock for the curve's x-axis (consistent across droplet/Fly clocks).
   await pool.query(
-    `INSERT INTO futures_account_snapshot (ts, wallet_usd, margin_usd, unrealized_usd, available_usd)
-     VALUES ($1, $2, $3, $4, $5) ON CONFLICT (ts) DO NOTHING`,
-    [now, a.walletBalanceUsd, a.marginBalanceUsd, a.unrealizedPnlUsd, a.availableBalanceUsd],
+    `INSERT INTO futures_account_snapshot (ts, account, wallet_usd, margin_usd, unrealized_usd, available_usd)
+     VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (account, ts) DO NOTHING`,
+    [now, account, a.walletBalanceUsd, a.marginBalanceUsd, a.unrealizedPnlUsd, a.availableBalanceUsd],
   );
   return { stored: true };
 }
@@ -240,10 +249,15 @@ export async function buildFuturesAnalytics(rangeDays: number): Promise<FuturesA
   // ── Account side (all from Postgres) ──
   const [latestSnap, snaps, incomeRows, posRows] = await Promise.all([
     pool.query<{ ts: string; wallet_usd: number; margin_usd: number; unrealized_usd: number; available_usd: number }>(
-      'SELECT ts::text, wallet_usd, margin_usd, unrealized_usd, available_usd FROM futures_account_snapshot ORDER BY ts DESC LIMIT 1',
+      // MAIN account only, deliberately: this drives the dashboard's equity
+      // curve, and folding a second sub-account into the same series would put
+      // a step in the history at the moment that relay switched on. The
+      // consolidated TOTAL sums across accounts (services/portfolio.ts); this
+      // view stays a single-account curve.
+      "SELECT ts::text, wallet_usd, margin_usd, unrealized_usd, available_usd FROM futures_account_snapshot WHERE account = 'main' ORDER BY ts DESC LIMIT 1",
     ),
     pool.query<{ ts: string; wallet_usd: number; margin_usd: number }>(
-      'SELECT ts::text, wallet_usd, margin_usd FROM futures_account_snapshot WHERE ts >= $1 ORDER BY ts ASC',
+      "SELECT ts::text, wallet_usd, margin_usd FROM futures_account_snapshot WHERE account = 'main' AND ts >= $1 ORDER BY ts ASC",
       [since],
     ),
     pool.query<{ income_type: string; income_usd: number; ts: string; symbol: string | null }>(

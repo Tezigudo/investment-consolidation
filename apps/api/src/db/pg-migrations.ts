@@ -521,6 +521,29 @@ export const PG_MIGRATIONS: Migration[] = [
       ALTER TABLE futures_positions ADD COLUMN IF NOT EXISTS margin_usd DOUBLE PRECISION;
     `,
   },
+  {
+    version: 20,
+    name: 'futures_account_snapshot_per_account',
+    up: `
+      -- v1 has traded from its OWN Binance sub-account since 2026-07-12, but the
+      -- relay only ever pushed ONE futures account and this table had no way to
+      -- say which. readFuturesPositions took "ORDER BY ts DESC LIMIT 1", so it
+      -- returned whichever account pushed last and the other one's equity was
+      -- missing from totals.all entirely (~$137 shown against a true ~$500).
+      -- Tag each snapshot so the reader can sum the latest row PER account.
+      --
+      -- Existing rows ARE the main account by definition, so the DEFAULT
+      -- backfills them correctly, and a relay that sends no label keeps working
+      -- exactly as before.
+      ALTER TABLE futures_account_snapshot
+        ADD COLUMN IF NOT EXISTS account TEXT NOT NULL DEFAULT 'main';
+      -- ts alone can no longer be unique: two accounts snapshot in the same ms.
+      ALTER TABLE futures_account_snapshot
+        DROP CONSTRAINT IF EXISTS futures_account_snapshot_pkey;
+      ALTER TABLE futures_account_snapshot
+        ADD PRIMARY KEY (account, ts);
+    `,
+  },
 ];
 
 export async function runPgMigrations(pool: Pool) {

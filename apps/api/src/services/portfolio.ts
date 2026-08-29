@@ -323,6 +323,10 @@ export function buildDimeCashRow(
 export function buildFuturesEquityRow(
   snap: { margin_usd: number; ts: number } | null,
   marketFX: number,
+  // Only set when MORE THAN ONE account is reporting. With a single account the
+  // name stays exactly 'Bot equity', so nothing in the UI moves until a second
+  // relay actually starts pushing.
+  account?: string,
 ): EnrichedPosition | null {
   if (!snap) return null;
   const usd = Number(snap.margin_usd);
@@ -331,7 +335,7 @@ export function buildFuturesEquityRow(
   return {
     platform: 'Futures',
     symbol: 'USDT',
-    name: 'Bot equity',
+    name: account ? `Bot equity · ${account}` : 'Bot equity',
     sector: 'Cash',
     qty: usd,
     avgUSD: 1,
@@ -360,14 +364,26 @@ export function buildFuturesEquityRow(
 // futures equity is additive, never load-bearing for the rest of the response.
 async function readFuturesPositions(marketFX: number): Promise<EnrichedPosition[]> {
   try {
-    const { rows } = await pool.query<{ ts: string; margin_usd: number }>(
-      'SELECT ts::text, margin_usd FROM futures_account_snapshot ORDER BY ts DESC LIMIT 1',
+    // The LATEST row PER ACCOUNT, not the latest row overall. v1 has traded from
+    // its own Binance sub-account since 2026-07-12; the old query took
+    // "ORDER BY ts DESC LIMIT 1", so it returned whichever account pushed most
+    // recently and the other one's equity was absent from totals.all entirely.
+    const { rows } = await pool.query<{ account: string; ts: string; margin_usd: number }>(
+      `SELECT DISTINCT ON (account) account, ts::text, margin_usd
+         FROM futures_account_snapshot
+        ORDER BY account, ts DESC`,
     );
-    const snap = rows[0]
-      ? { ts: Number(rows[0].ts), margin_usd: Number(rows[0].margin_usd) }
-      : null;
-    const row = buildFuturesEquityRow(snap, marketFX);
-    return row ? [row] : [];
+    const labelled = rows.length > 1;
+    const out: EnrichedPosition[] = [];
+    for (const r of rows) {
+      const row = buildFuturesEquityRow(
+        { ts: Number(r.ts), margin_usd: Number(r.margin_usd) },
+        marketFX,
+        labelled ? r.account : undefined,
+      );
+      if (row) out.push(row);
+    }
+    return out;
   } catch (e) {
     console.warn('[portfolio] futures snapshot read failed:', (e as Error).message);
     return [];

@@ -82,6 +82,33 @@ describe('buildDimeCashRow — withdrawals', () => {
 describe('buildFuturesEquityRow — bot equity bucket', () => {
   const TS = 1_750_000_000_000;
 
+  // v1 has traded from its own Binance sub-account since 2026-07-12. Until
+  // 2026-08-29 the reader took the latest snapshot row overall, so only one
+  // account ever reached totals.all — ~$137 shown against a true ~$500.
+  it('single account → name is unchanged, so nothing in the UI moves', () => {
+    const row = buildFuturesEquityRow({ margin_usd: 137.59, ts: TS }, FX);
+    expect(row!.name).toBe('Bot equity');
+  });
+
+  it('labelled account → name distinguishes the sub-account', () => {
+    const row = buildFuturesEquityRow({ margin_usd: 100.42, ts: TS }, FX, 'v1');
+    expect(row!.name).toBe('Bot equity · v1');
+    expect(row!.marketUSD).toBeCloseTo(100.42, 6);
+  });
+
+  it('two accounts sum to the real total, not the larger of the two', () => {
+    const main = buildFuturesEquityRow({ margin_usd: 137.59, ts: TS }, FX, 'main');
+    const v1 = buildFuturesEquityRow({ margin_usd: 100.42, ts: TS }, FX, 'v1');
+    const totalUSD = [main, v1].reduce((a, r) => a + (r?.marketUSD ?? 0), 0);
+    expect(totalUSD).toBeCloseTo(238.01, 6);
+    // The bug: the old reader returned exactly one of these rows.
+    expect(totalUSD).toBeGreaterThan(main!.marketUSD);
+  });
+
+  it('a labelled account still honours the dust guard', () => {
+    expect(buildFuturesEquityRow({ margin_usd: 0.004, ts: TS }, FX, 'v1')).toBeNull();
+  });
+
   it('snapshot present → cash-like row equal to margin_usd (equity, PNL 0)', () => {
     const row = buildFuturesEquityRow({ margin_usd: 137.59, ts: TS }, FX);
     expect(row).not.toBeNull();

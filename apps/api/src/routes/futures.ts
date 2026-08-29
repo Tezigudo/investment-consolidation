@@ -5,6 +5,7 @@
 //
 // INGEST (droplet relay — the chosen architecture):
 //   POST /futures/account-snapshot         — wallet/margin/uPnL/available
+//        (carries an `account` label; v1 relays from its own sub-account)
 //   POST /futures/positions                — replace the open-position set
 //   POST /futures/income                   — batch income rows (deduped)
 //
@@ -28,6 +29,10 @@ import {
 const fin = () => z.number().finite();
 
 const AccountBody = z.object({
+  // Sub-account label. Constrained to a slug so it can never collide with SQL
+  // quoting or render as something surprising in the portfolio row name.
+  // Defaults to 'main' so a relay that predates this field keeps working.
+  account: z.string().min(1).max(32).regex(/^[A-Za-z0-9_-]+$/).default('main'),
   walletBalanceUsd: fin().nonnegative(),
   marginBalanceUsd: fin(),
   unrealizedPnlUsd: fin(),

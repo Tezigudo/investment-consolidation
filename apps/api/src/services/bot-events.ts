@@ -45,6 +45,23 @@ interface HeartbeatState {
 const heartbeatCache = new Map<string, HeartbeatState>();
 const HEARTBEAT_SNAPSHOT_INTERVAL_MS = 60 * 60 * 1000;  // 1 hour
 
+/** Is the Neon compute already awake for the scheduler's :07/:37 crons?
+ *
+ * Neon suspends after ~5 min idle, so a write on ANY other minute is a wake of
+ * its own — ~5 minutes of billed compute to store one row. Three legs each
+ * persisted their hourly snapshot at whatever arbitrary minute their hour
+ * happened to elapse on, so that was up to three extra wakes an hour, for
+ * three rows. Riding the cron's wake makes them free.
+ *
+ * The window is generous (5 min) because it only has to catch ONE of the ~10
+ * heartbeats each leg sends inside it; missing a window just defers the
+ * snapshot to the next mark, which is 30 minutes of coarse equity history.
+ */
+export function onCronWake(nowMs: number): boolean {
+  const m = new Date(nowMs).getUTCMinutes();
+  return (m >= 7 && m < 12) || (m >= 37 && m < 42);
+}
+
 // Returns a valid GateStatus only if every field the UI walks (gates_long,
 // gates_short, missing_long, missing_short, values) is present with the
 // expected shape. A partial / drifted payload becomes null so the dashboard
@@ -83,7 +100,7 @@ export async function insertBotEvent(p: BotEventPayload): Promise<{ inserted: bo
     // table again.
     const now = Date.now();
     const lastPersisted = cur?.lastPersistedTs ?? 0;
-    if (now - lastPersisted < HEARTBEAT_SNAPSHOT_INTERVAL_MS) {
+    if (now - lastPersisted < HEARTBEAT_SNAPSHOT_INTERVAL_MS || !onCronWake(now)) {
       // Outbox semantics: caller sees inserted=true so its cursor advances.
       // We return id=null because nothing was actually written.
       return { inserted: true, id: null };

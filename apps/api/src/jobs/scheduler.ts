@@ -135,7 +135,22 @@ export function startJobs() {
   // halves the 24/7 cron wakes. Tradeoff: prices/holdings up to ~30 min stale,
   // fine for a passive monitoring dashboard. Pair with the lengthened web poll
   // intervals (usePortfolio/BotStatusCard) so the compute can actually suspend.
-  const FAST_CRON = '7,37 * * * *';
+  // EVERY scheduled wake in this file lands on minute :07 (and :37 for the
+  // twice-hourly one). That is not cosmetic — it is the whole compute budget.
+  //
+  // Neon suspends a compute after 5 minutes idle, so each DISTINCT minute-mark
+  // costs ~5 minutes of active time whether the job takes 200 ms or 4 minutes.
+  // Until 2026-09 these crons were spread over :00, :07, :15, :17 and :37 —
+  // five wakes an hour, ~22 min/h of compute, ≈270 h/month. Collapsing them
+  // onto one mark makes every job share a single wake: ~10 min/h, ≈120 h/month.
+  // August 2026 burned 427 h, exhausted the free-tier quota, and every
+  // DB-backed route returned 500 (Postgres 53000) for days.
+  //
+  // ⚠️ If you add a cron here, give it one of these marks. A new job on its own
+  // minute costs 5 minutes of compute an hour no matter how small it is.
+  const FAST_CRON = '7,37 * * * *';   // twice hourly, on the marks
+  const HOURLY_CRON = '7 * * * *';    // hourly, same mark
+  const SIX_HOURLY_CRON = '7 */6 * * *';
 
   cron.schedule(FAST_CRON, async () => {
     try {
@@ -177,7 +192,7 @@ export function startJobs() {
 
   // Futures income ledger (realized PnL / funding / commission) — incremental,
   // hourly. Cheap after the cold-start backfill (cursor = last stored ts).
-  cron.schedule('17 * * * *', async () => {
+  cron.schedule(HOURLY_CRON, async () => {
     if (!config.binanceFuturesEnabled) return;
     try {
       const r = await syncFuturesIncome();
@@ -200,14 +215,14 @@ export function startJobs() {
     }
   });
 
-  cron.schedule('30 2 * * *', () => {
+  cron.schedule('7 2 * * *', () => {
     void warmDailyChartCache();
   });
 
   // Capture today's portfolio snapshot every 6 hours so the chart's
   // last point stays current within the day. Daily UTC snapshot row is
   // upserted (not appended), so over-frequent runs are fine.
-  cron.schedule('0 */6 * * *', async () => {
+  cron.schedule(SIX_HOURLY_CRON, async () => {
     try {
       const s = await captureSnapshotNow();
       console.log(`[jobs] portfolio snapshot ${s.date}: ${s.marketTHB.toFixed(0)} THB`);
@@ -238,7 +253,7 @@ export function startJobs() {
   })();
 
   // FX every hour (live + daily series tail)
-  cron.schedule('0 * * * *', async () => {
+  cron.schedule(HOURLY_CRON, async () => {
     try {
       await getUSDTHB(true);
       await refreshDailyUSDTHB();
@@ -256,7 +271,7 @@ export function startJobs() {
   // 5-year first-ever backfill can take 20-40 min and shouldn't happen
   // inside an unattended cron tick. User must run
   // `bun run import:binance` once manually; afterwards this runs incrementally.
-  cron.schedule('15 * * * *', async () => {
+  cron.schedule(HOURLY_CRON, async () => {
     if (!config.binanceEnabled) return;
     if (!(await isBinanceSyncSeeded())) {
       console.log(
@@ -278,7 +293,7 @@ export function startJobs() {
   // Dime sends a few times/week; 6h gives prompt freshness without
   // spamming Gmail. Gated on Gmail credentials + cached OAuth token so
   // the cron no-ops cleanly when auth is missing or expired.
-  cron.schedule('0 */6 * * *', async () => {
+  cron.schedule(SIX_HOURLY_CRON, async () => {
     if (!isGmailConfigured()) {
       console.log('[jobs] dime mail: Gmail credentials not configured — skipping');
       return;

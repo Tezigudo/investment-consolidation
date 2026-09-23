@@ -57,6 +57,11 @@ const PositionsBody = z.object({
   // what a fetch failure sends) → the server PRESERVES existing sl/tp instead
   // of letting a transient blip null out a bracket that's still resting.
   bracketsKnown: z.boolean().default(false),
+  // Accounts the relay actually READ this push. When present, the server only
+  // deletes closed rows within these accounts (plus legacy '' rows), so a leg
+  // whose read failed keeps its last-known row instead of vanishing. Absent
+  // (older relay) → the payload is treated as the complete open set.
+  accountsRead: z.array(z.string().max(32)).max(20).optional(),
 });
 
 const IncomeBody = z.object({
@@ -92,7 +97,7 @@ export async function futuresRoutes(app: FastifyInstance) {
   app.post('/futures/positions', async (req, reply) => {
     const p = PositionsBody.safeParse(req.body);
     if (!p.success) { reply.code(400); return { error: 'invalid', details: p.error.flatten().fieldErrors }; }
-    await ingestFuturesPositions(p.data.positions, p.data.bracketsKnown);
+    await ingestFuturesPositions(p.data.positions, p.data.bracketsKnown, p.data.accountsRead);
     return { ok: true, count: p.data.positions.length };
   });
 

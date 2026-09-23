@@ -175,10 +175,15 @@ export async function ingestFuturesAccountSnapshot(a: IngestAccount): Promise<{ 
 
 /** Mirror the live open-position set (upsert open, delete closed). Wrapped in a
  *  transaction so a reader (or a concurrent push) never sees a half-applied set
- *  — e.g. positions deleted but not yet re-inserted. */
+ *  — e.g. positions deleted but not yet re-inserted.
+ *
+ *  `accountsRead` scopes the delete: only rows in those accounts (and legacy ''
+ *  rows) can be removed, so an account the relay failed to read this push keeps
+ *  its last-known position. undefined = older relay, payload is the full set. */
 export async function ingestFuturesPositions(
   positions: IngestPosition[],
   bracketsKnown = false,
+  accountsRead?: string[],
 ): Promise<void> {
   const now = Date.now();
   // Keyed by (account, symbol): two legs holding the same symbol in separate
@@ -207,16 +212,15 @@ export async function ingestFuturesPositions(
          p.slPrice ?? null, p.tpPrice ?? null, bracketsKnown, p.marginUsd ?? null, p.account ?? ''],
       );
     }
-    if (openSymbols.length) {
-      await client.query(
-        `DELETE FROM futures_positions f WHERE NOT EXISTS (
-           SELECT 1 FROM unnest($1::text[], $2::text[]) AS o(account, symbol)
-           WHERE o.account = f.account AND o.symbol = f.symbol)`,
-        [openAccounts, openSymbols],
-      );
-    } else {
-      await client.query('DELETE FROM futures_positions');
-    }
+    // Closed = not in this push. $3 NULL → every row is in scope (full set).
+    await client.query(
+      `DELETE FROM futures_positions f
+        WHERE ($3::text[] IS NULL OR f.account = '' OR f.account = ANY($3::text[]))
+          AND NOT EXISTS (
+            SELECT 1 FROM unnest($1::text[], $2::text[]) AS o(account, symbol)
+            WHERE o.account = f.account AND o.symbol = f.symbol)`,
+      [openAccounts, openSymbols, accountsRead ?? null],
+    );
     await client.query('COMMIT');
   } catch (e) {
     await client.query('ROLLBACK');

@@ -521,6 +521,21 @@ export const PG_MIGRATIONS: Migration[] = [
       ALTER TABLE futures_positions ADD COLUMN IF NOT EXISTS margin_usd DOUBLE PRECISION;
     `,
   },
+  {
+    version: 20,
+    name: 'futures_positions_account_key',
+    up: `
+      -- One row per (sub-account, symbol). The droplet relay reads every leg's
+      -- sub-account, and v1 and donchian both trade BTCUSDT — keyed by symbol
+      -- alone, two open BTC positions collided and the relay had to DROP one.
+      -- account = the relay's leg instance (v1 / donchian / sol_supertrend);
+      -- '' for rows from a relay that predates this (and the Fly-side
+      -- refreshFuturesLive path, which reads a single account).
+      ALTER TABLE futures_positions ADD COLUMN IF NOT EXISTS account TEXT NOT NULL DEFAULT '';
+      ALTER TABLE futures_positions DROP CONSTRAINT IF EXISTS futures_positions_pkey;
+      ALTER TABLE futures_positions ADD PRIMARY KEY (account, symbol);
+    `,
+  },
 ];
 
 export async function runPgMigrations(pool: Pool) {

@@ -68,13 +68,14 @@ export async function refreshFuturesLive(): Promise<{ skipped: boolean }> {
   }
 
   // Mirror live positions: upsert the open set, delete anything now closed.
+  // Single account read with Fly's own key → account '' (see migration 20).
   const openSymbols = positions.map((p) => p.symbol);
   for (const p of positions) {
     await pool.query(
       `INSERT INTO futures_positions
          (symbol, position_side, position_amt, entry_price, mark_price, unrealized_usd, liq_price, leverage, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       ON CONFLICT (symbol) DO UPDATE SET
+       ON CONFLICT (account, symbol) DO UPDATE SET
          position_side=$2, position_amt=$3, entry_price=$4, mark_price=$5,
          unrealized_usd=$6, liq_price=$7, leverage=$8, updated_at=$9`,
       [p.symbol, p.positionSide, p.positionAmt, p.entryPrice, p.markPrice,
@@ -83,11 +84,11 @@ export async function refreshFuturesLive(): Promise<{ skipped: boolean }> {
   }
   if (openSymbols.length) {
     await pool.query(
-      `DELETE FROM futures_positions WHERE symbol <> ALL($1::text[])`,
+      `DELETE FROM futures_positions WHERE account = '' AND symbol <> ALL($1::text[])`,
       [openSymbols],
     );
   } else {
-    await pool.query('DELETE FROM futures_positions');
+    await pool.query("DELETE FROM futures_positions WHERE account = ''");
   }
   return { skipped: false };
 }
@@ -138,6 +139,7 @@ export interface IngestPosition {
   liquidationPrice: number | null;
   leverage: number;
   marginUsd?: number | null; // isolatedWallet (isolated) / positionInitialMargin (cross)
+  account?: string;          // relay leg instance owning the sub-account; '' = legacy relay
   slPrice?: number | null;   // resting reduce-only STOP_MARKET stopPrice, if any
   tpPrice?: number | null;   // resting reduce-only TAKE_PROFIT_MARKET stopPrice, if any
 }
@@ -179,7 +181,10 @@ export async function ingestFuturesPositions(
   bracketsKnown = false,
 ): Promise<void> {
   const now = Date.now();
-  const open = positions.map((p) => p.symbol);
+  // Keyed by (account, symbol): two legs holding the same symbol in separate
+  // sub-accounts are two positions, not one.
+  const openAccounts = positions.map((p) => p.account ?? '');
+  const openSymbols = positions.map((p) => p.symbol);
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -190,20 +195,25 @@ export async function ingestFuturesPositions(
       // the last-known value so a transient blip never erases a live bracket.
       await client.query(
         `INSERT INTO futures_positions
-           (symbol, position_side, position_amt, entry_price, mark_price, unrealized_usd, liq_price, leverage, updated_at, sl_price, tp_price, margin_usd)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$13)
-         ON CONFLICT (symbol) DO UPDATE SET
+           (symbol, position_side, position_amt, entry_price, mark_price, unrealized_usd, liq_price, leverage, updated_at, sl_price, tp_price, margin_usd, account)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$13,$14)
+         ON CONFLICT (account, symbol) DO UPDATE SET
            position_side=$2, position_amt=$3, entry_price=$4, mark_price=$5,
            unrealized_usd=$6, liq_price=$7, leverage=$8, updated_at=$9, margin_usd=$13,
            sl_price = CASE WHEN $12::boolean THEN $10 ELSE COALESCE($10, futures_positions.sl_price) END,
            tp_price = CASE WHEN $12::boolean THEN $11 ELSE COALESCE($11, futures_positions.tp_price) END`,
         [p.symbol, p.positionSide, p.positionAmt, p.entryPrice, p.markPrice,
          p.unrealizedPnlUsd, p.liquidationPrice, p.leverage, now,
-         p.slPrice ?? null, p.tpPrice ?? null, bracketsKnown, p.marginUsd ?? null],
+         p.slPrice ?? null, p.tpPrice ?? null, bracketsKnown, p.marginUsd ?? null, p.account ?? ''],
       );
     }
-    if (open.length) {
-      await client.query('DELETE FROM futures_positions WHERE symbol <> ALL($1::text[])', [open]);
+    if (openSymbols.length) {
+      await client.query(
+        `DELETE FROM futures_positions f WHERE NOT EXISTS (
+           SELECT 1 FROM unnest($1::text[], $2::text[]) AS o(account, symbol)
+           WHERE o.account = f.account AND o.symbol = f.symbol)`,
+        [openAccounts, openSymbols],
+      );
     } else {
       await client.query('DELETE FROM futures_positions');
     }
@@ -250,7 +260,7 @@ export async function buildFuturesAnalytics(rangeDays: number): Promise<FuturesA
       'SELECT income_type, income_usd, ts::text, symbol FROM futures_income WHERE ts >= $1 ORDER BY ts ASC',
       [since],
     ),
-    pool.query<{ symbol: string; position_side: string; position_amt: number; entry_price: number; mark_price: number; unrealized_usd: number; liq_price: number | null; leverage: number; updated_at: string; sl_price: number | null; tp_price: number | null; margin_usd: number | null }>(
+    pool.query<{ symbol: string; position_side: string; position_amt: number; entry_price: number; mark_price: number; unrealized_usd: number; liq_price: number | null; leverage: number; updated_at: string; sl_price: number | null; tp_price: number | null; margin_usd: number | null; account: string }>(
       'SELECT * FROM futures_positions ORDER BY ABS(position_amt * mark_price) DESC',
     ),
   ]);
@@ -288,6 +298,7 @@ export async function buildFuturesAnalytics(rangeDays: number): Promise<FuturesA
 
   const positions: FuturesPosition[] = posRows.rows.map((r) => ({
     symbol: r.symbol,
+    account: r.account ? r.account : null,
     positionSide: r.position_side,
     positionAmt: Number(r.position_amt),
     entryPrice: Number(r.entry_price),

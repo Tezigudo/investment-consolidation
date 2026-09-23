@@ -38,6 +38,9 @@ const PositionsBody = z.object({
   positions: z.array(
     z.object({
       symbol: z.string().min(1).max(32),
+      // Relay leg instance that owns the sub-account (v1 / donchian / …).
+      // Optional so a relay that predates it still ingests (stored as '').
+      account: z.string().max(32).default(''),
       positionSide: z.string().max(16).default('BOTH'),
       positionAmt: fin(),
       entryPrice: fin().nonnegative(),

@@ -226,6 +226,10 @@ export type FuturesIncomeType =
 
 export interface FuturesPosition {
   symbol: string;
+  // Relay leg instance owning the sub-account (v1 / donchian / sol_supertrend).
+  // Two legs can hold the same symbol at once, so (account, symbol) is the key.
+  // null when pushed by a relay that predates per-account rows.
+  account?: string | null;
   positionSide: string;        // BOTH / LONG / SHORT
   positionAmt: number;         // signed; < 0 = short
   entryPrice: number;
@@ -239,9 +243,7 @@ export interface FuturesPosition {
   // Resting reduce-only bracket orders on the account (Tier 2 — the droplet
   // relay fetches /fapi/v1/openOrders and matches SL=STOP_MARKET,
   // TP=TAKE_PROFIT_MARKET by symbol). null when none placed / not fetched.
-  // ACCOUNT-level: the relay reads ONE account, and futures_positions is keyed
-  // by symbol (one BTC row) — for per-LEG SL/TP that survives that collision,
-  // see FuturesBotLegStats.openExit (synthesized from each leg's own telemetry).
+  // Per sub-account: the brackets resting on THIS position's account.
   slPriceUsd?: number | null;
   tpPriceUsd?: number | null;
 }
@@ -299,6 +301,18 @@ export function isBotSymbol(
   botSymbols: readonly string[] = BOT_SYMBOLS,
 ): boolean {
   return botSymbols.includes(symbol);
+}
+
+/** Short leg name for a position's relay account ('sol_supertrend' → 'sol').
+ *  null for legacy rows with no account. */
+export function positionLegLabel(account: string | null | undefined): string | null {
+  if (!account) return null;
+  return account === 'sol_supertrend' ? 'sol' : account;
+}
+
+/** Stable React key for a position: one symbol can be open on two legs. */
+export function positionKey(p: { account?: string | null; symbol: string }): string {
+  return `${p.account ?? ''}:${p.symbol}`;
 }
 
 export interface RealizedSplit {

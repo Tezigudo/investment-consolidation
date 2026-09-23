@@ -8,7 +8,7 @@ import { AreaChart } from '../../components/charts';
 import { ChannelLadderCard } from '../../components/ChannelLadderCard';
 import { M } from './styles';
 import type { FuturesExitPlan, ManualSymbolStats } from '@consolidate/shared';
-import { splitRealizedBySymbol, isBotSymbol } from '@consolidate/shared';
+import { splitRealizedBySymbol, isBotSymbol, positionLegLabel, positionKey } from '@consolidate/shared';
 
 const UP = 'var(--up, #3fb950)';
 const DOWN = 'var(--down, #f85149)';
@@ -147,10 +147,10 @@ export function FuturesTab({ privacy }: { privacy: boolean }) {
             : data.positions.map((p) => {
               const isBot = isBotSymbol(p.symbol);
               return (
-              <div key={p.symbol} style={{ ...M.card, marginBottom: 8 }}>
+              <div key={positionKey(p)} style={{ ...M.card, marginBottom: 8 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div>
-                    <div style={{ fontWeight: 700 }}>{p.symbol} <PosTag isBot={isBot} /> <span style={{ color: p.positionAmt < 0 ? DOWN : UP, fontSize: 11 }}>{p.positionAmt < 0 ? 'SHORT' : 'LONG'}{p.leverage > 0 ? ` ${p.leverage}×` : ''}</span></div>
+                    <div style={{ fontWeight: 700 }}>{p.symbol} <PosTag isBot={isBot} leg={positionLegLabel(p.account)} /> <span style={{ color: p.positionAmt < 0 ? DOWN : UP, fontSize: 11 }}>{p.positionAmt < 0 ? 'SHORT' : 'LONG'}{p.leverage > 0 ? ` ${p.leverage}×` : ''}</span></div>
                     <div style={{ fontSize: 11, color: MUTED }}>entry {usd(p.entryPrice)} · mark {usd(p.markPrice)}{p.marginUsd != null ? <> · margin {usd(p.marginUsd, privacy)}</> : null}</div>
                   </div>
                   <div style={{ fontFamily: 'var(--mono)', fontWeight: 700, color: sc(p.unrealizedPnlUsd) }}>{usd(p.unrealizedPnlUsd, privacy)}</div>
@@ -234,14 +234,14 @@ export function FuturesTab({ privacy }: { privacy: boolean }) {
 }
 
 // BOT (bot-traded symbol, e.g. BTC) vs MANUAL (hand trade on the same account).
-function PosTag({ isBot }: { isBot: boolean }) {
+function PosTag({ isBot, leg }: { isBot: boolean; leg?: string | null }) {
   return (
     <span style={{
       fontSize: 9, fontWeight: 700, letterSpacing: 0.5, padding: '2px 6px', borderRadius: 999,
       verticalAlign: 'middle',
       background: isBot ? 'rgba(47,128,199,0.18)' : 'rgba(212,160,23,0.20)',
       color: isBot ? '#4aa3e8' : '#d4a017',
-    }}>{isBot ? 'BOT' : 'MANUAL'}</span>
+    }}>{isBot ? (leg ? `BOT · ${leg}` : 'BOT') : 'MANUAL'}</span>
   );
 }
 

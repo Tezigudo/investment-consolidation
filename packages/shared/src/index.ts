@@ -468,6 +468,14 @@ export interface FuturesReconciliation {
   note: string;
 }
 
+/** One futures wallet transfer (signed: + in, − out). All futures accounts mixed;
+ *  futures_income has no account column, so no per-leg attribution. */
+export interface FuturesTransfer {
+  ts: number;     // ms
+  amount: number; // signed
+  asset: string;
+}
+
 export interface FuturesAnalytics {
   generatedAt: number;
   rangeDays: number;
@@ -477,6 +485,9 @@ export interface FuturesAnalytics {
   incomeByDay: FuturesIncomeBucket[];  // realized / funding / commission per day
   positions: FuturesPosition[];        // current open futures positions
   manualTrades: ManualSymbolStats[];   // per-symbol MANUAL (non-bot) activity + live open status
+  // Wallet transfers (USDT only, newest 100, newest first, not range-windowed).
+  // Internal moves: never part of P&L. List only — ingest has known gaps, so no total.
+  transfers: FuturesTransfer[];
   // ── Bot side (always available from bot_events) ──
   // Scoped to `rangeDays` — a trade belongs to the window when it CLOSED inside
   // it (open trades always count). Pairing runs over full history first, so a

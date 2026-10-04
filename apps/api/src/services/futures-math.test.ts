@@ -9,6 +9,7 @@ import {
   strategyMeta,
   deriveManualStats,
   reconcileEquity,
+  toTransfers,
   type IncomeRow,
   type BotEventLite,
 } from './futures-math.js';
@@ -616,5 +617,23 @@ describe('exit plan (open trades)', () => {
       ev({ source: 'L', kind: 'exit', bot_ts_ms: T0 + 5, equity_usd: 140 }),
     ], NOW);
     expect(deriveLegStats(flatTrades, new Map())[0].openExit).toBeNull();
+  });
+});
+
+describe('toTransfers', () => {
+  it('maps signed rows as-is, newest first', () => {
+    const out = toTransfers([
+      { incomeUsd: 15, asset: 'USDT', ts: T0 },
+      { incomeUsd: -142.93, asset: 'USDT', ts: T0 + 2 * DAY },
+      { incomeUsd: 142.93, asset: 'USDT', ts: T0 + DAY },
+    ]);
+    expect(out).toEqual([
+      { ts: T0 + 2 * DAY, amount: -142.93, asset: 'USDT' },
+      { ts: T0 + DAY, amount: 142.93, asset: 'USDT' },
+      { ts: T0, amount: 15, asset: 'USDT' },
+    ]);
+  });
+  it('returns [] for no rows', () => {
+    expect(toTransfers([])).toEqual([]);
   });
 });

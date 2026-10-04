@@ -253,6 +253,31 @@ export function Futures({ privacy }: Props) {
             );
           })()}
 
+          {/* ── Transfers: wallet deposits/withdrawals across ALL futures accounts
+                (futures_income has no account column). Not P&L; list only, no
+                total — the ingest has known gaps. ── */}
+          <Section title="Transfers" sub="USDT · newest 20">
+            <div style={card}>
+              {(data.transfers ?? []).length === 0
+                ? <Empty>No futures transfers recorded.</Empty>
+                : (
+                  <table style={tbl}>
+                    <thead><tr>{['Date', 'Amount', 'Asset'].map((h) => <th key={h} style={th}>{h}</th>)}</tr></thead>
+                    <tbody>
+                      {(data.transfers ?? []).slice(0, 20).map((t, i) => (
+                        <tr key={`${t.ts}-${i}`}>
+                          <td style={td}>{fmtTs(t.ts)}</td>
+                          <td style={{ ...td, color: signColor(t.amount) }}>{!privacy && t.amount > 0 ? '+' : ''}{usd(t.amount, privacy)}</td>
+                          <td style={td}>{t.asset}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              <div style={{ color: MUTED, fontSize: 11, marginTop: 8 }}>All futures accounts incl. bot sub-accounts; not counted in P&L.</div>
+            </div>
+          </Section>
+
           <ChannelLadderCard privacy={privacy} />
 
       {/* ── Bot legs ── */}

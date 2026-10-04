@@ -176,6 +176,22 @@ export function FuturesTab({ privacy }: { privacy: boolean }) {
             </>
           )}
 
+          {/* transfers — wallet in/out across ALL futures accounts; not P&L, no total. */}
+          <div style={M.section as React.CSSProperties}>Transfers</div>
+          <div style={{ ...M.card, marginBottom: 8 }}>
+            {(data.transfers ?? []).length === 0
+              ? <div style={{ fontSize: 12, color: MUTED }}>No futures transfers recorded.</div>
+              : (data.transfers ?? []).slice(0, 20).map((t, i) => (
+                <div key={`${t.ts}-${i}`} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '3px 0' }}>
+                  <span style={{ color: MUTED }}>{new Date(t.ts).toLocaleDateString()}</span>
+                  <span style={{ fontFamily: 'var(--mono)', fontWeight: 700, color: sc(t.amount) }}>
+                    {t.amount > 0 ? '+' : ''}{usd(t.amount, privacy)} <span style={{ color: MUTED, fontWeight: 400 }}>{t.asset}</span>
+                  </span>
+                </div>
+              ))}
+            <div style={{ fontSize: 10, color: MUTED, marginTop: 6 }}>All futures accounts incl. bot sub-accounts; not counted in P&L.</div>
+          </div>
+
           <ChannelLadderCard privacy={privacy} />
 
           {/* bot legs — windowed line + lifetime line. Rows come from lifetime

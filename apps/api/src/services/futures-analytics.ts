@@ -32,6 +32,7 @@ import {
   PAIRING_KINDS,
   deriveManualStats,
   reconcileEquity,
+  toTransfers,
   type BotEventLite,
   type IncomeRow,
 } from './futures-math.js';
@@ -252,7 +253,7 @@ export async function buildFuturesAnalytics(rangeDays: number): Promise<FuturesA
   const since = now - rangeDays * 24 * 60 * 60 * 1000;
 
   // ── Account side (all from Postgres) ──
-  const [latestSnap, snaps, incomeRows, posRows] = await Promise.all([
+  const [latestSnap, snaps, incomeRows, posRows, transferRows] = await Promise.all([
     pool.query<{ ts: string; wallet_usd: number; margin_usd: number; unrealized_usd: number; available_usd: number }>(
       'SELECT ts::text, wallet_usd, margin_usd, unrealized_usd, available_usd FROM futures_account_snapshot ORDER BY ts DESC LIMIT 1',
     ),
@@ -266,6 +267,13 @@ export async function buildFuturesAnalytics(rangeDays: number): Promise<FuturesA
     ),
     pool.query<{ symbol: string; position_side: string; position_amt: number; entry_price: number; mark_price: number; unrealized_usd: number; liq_price: number | null; leverage: number; updated_at: string; sl_price: number | null; tp_price: number | null; margin_usd: number | null; account: string }>(
       'SELECT * FROM futures_positions ORDER BY ABS(position_amt * mark_price) DESC',
+    ),
+    // Wallet transfers: USDT only (BNB rows are fee dust), lifetime — sparse, so
+    // deliberately NOT range-windowed. Display-only; summarizeIncome still skips them.
+    pool.query<{ income_usd: number; asset: string; ts: string }>(
+      `SELECT income_usd, asset, ts::text FROM futures_income
+        WHERE income_type = 'TRANSFER' AND asset = 'USDT'
+        ORDER BY ts DESC LIMIT 100`,
     ),
   ]);
 
@@ -408,6 +416,9 @@ export async function buildFuturesAnalytics(rangeDays: number): Promise<FuturesA
     incomeByDay: inc.byDay,
     positions,
     manualTrades,
+    transfers: toTransfers(transferRows.rows.map((r) => ({
+      incomeUsd: Number(r.income_usd), asset: r.asset, ts: Number(r.ts),
+    }))),
     botLegs,
     botLegsLifetime,
     botTrades,

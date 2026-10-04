@@ -11,6 +11,7 @@ import type {
   FuturesReconciliation,
   FuturesExitPlan,
   FuturesPosition,
+  FuturesTransfer,
   ManualSymbolStats,
 } from '@consolidate/shared';
 import { isBotSymbol, BOT_SYMBOLS, isOpenPosition } from '@consolidate/shared';
@@ -25,6 +26,19 @@ export interface IncomeRow {
   incomeUsd: number;  // signed exactly as Binance returns (funding < 0 = paid)
   ts: number;         // ms
   symbol?: string;    // the contract, e.g. BTCUSDT (empty for wallet transfers)
+}
+
+export interface TransferRow {
+  incomeUsd: number; // signed
+  asset: string;
+  ts: number;        // ms
+}
+
+/** Shape raw TRANSFER ledger rows for display: newest first, signed as-is. */
+export function toTransfers(rows: TransferRow[]): FuturesTransfer[] {
+  return rows
+    .map((r) => ({ ts: r.ts, amount: r.incomeUsd, asset: r.asset }))
+    .sort((a, b) => b.ts - a.ts);
 }
 
 export interface IncomeSummary {

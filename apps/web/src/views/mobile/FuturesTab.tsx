@@ -29,6 +29,13 @@ function usd(v: number | null | undefined, privacy = false): string {
   const sign = v < 0 ? '−' : '';
   return `${sign}$${Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
+// Same clock as the desktop Futures view: Bangkok time, "Oct 1, 07:37".
+function fmtTs(ms: number): string {
+  return new Date(ms).toLocaleString('en-US', {
+    timeZone: 'Asia/Bangkok', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+}
 function sc(v: number | null | undefined): string {
   if (v == null || v === 0) return 'var(--text)';
   return v > 0 ? UP : DOWN;
@@ -183,9 +190,9 @@ export function FuturesTab({ privacy }: { privacy: boolean }) {
               ? <div style={{ fontSize: 12, color: MUTED }}>No futures transfers recorded.</div>
               : (data.transfers ?? []).slice(0, 20).map((t, i) => (
                 <div key={`${t.ts}-${i}`} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '3px 0' }}>
-                  <span style={{ color: MUTED }}>{new Date(t.ts).toLocaleDateString()}</span>
+                  <span style={{ color: MUTED }}>{fmtTs(t.ts)}</span>
                   <span style={{ fontFamily: 'var(--mono)', fontWeight: 700, color: sc(t.amount) }}>
-                    {t.amount > 0 ? '+' : ''}{usd(t.amount, privacy)} <span style={{ color: MUTED, fontWeight: 400 }}>{t.asset}</span>
+                    {!privacy && t.amount > 0 ? '+' : ''}{usd(t.amount, privacy)} <span style={{ color: MUTED, fontWeight: 400 }}>{t.asset}</span>
                   </span>
                 </div>
               ))}

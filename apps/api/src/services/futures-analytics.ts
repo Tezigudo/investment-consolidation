@@ -268,7 +268,7 @@ export async function buildFuturesAnalytics(rangeDays: number): Promise<FuturesA
     pool.query<{ symbol: string; position_side: string; position_amt: number; entry_price: number; mark_price: number; unrealized_usd: number; liq_price: number | null; leverage: number; updated_at: string; sl_price: number | null; tp_price: number | null; margin_usd: number | null; account: string }>(
       'SELECT * FROM futures_positions ORDER BY ABS(position_amt * mark_price) DESC',
     ),
-    // Wallet transfers: USDT only (BNB rows are fee dust), lifetime — sparse, so
+    // Wallet transfers: USDT only (BNB rows are fee dust), newest 100 — sparse, so
     // deliberately NOT range-windowed. Display-only; summarizeIncome still skips them.
     pool.query<{ income_usd: number; asset: string; ts: string }>(
       `SELECT income_usd, asset, ts::text FROM futures_income

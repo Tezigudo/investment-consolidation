@@ -485,7 +485,7 @@ export interface FuturesAnalytics {
   incomeByDay: FuturesIncomeBucket[];  // realized / funding / commission per day
   positions: FuturesPosition[];        // current open futures positions
   manualTrades: ManualSymbolStats[];   // per-symbol MANUAL (non-bot) activity + live open status
-  // Wallet transfers (USDT only, lifetime, newest first, not range-windowed).
+  // Wallet transfers (USDT only, newest 100, newest first, not range-windowed).
   // Internal moves: never part of P&L. List only — ingest has known gaps, so no total.
   transfers: FuturesTransfer[];
   // ── Bot side (always available from bot_events) ──

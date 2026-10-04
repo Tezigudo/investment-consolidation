@@ -256,7 +256,7 @@ export function Futures({ privacy }: Props) {
           {/* ── Transfers: wallet deposits/withdrawals across ALL futures accounts
                 (futures_income has no account column). Not P&L; list only, no
                 total — the ingest has known gaps. ── */}
-          <Section title="Transfers" sub={`USDT · last ${Math.min(data.transfers?.length ?? 0, 20)} of ${data.transfers?.length ?? 0}`}>
+          <Section title="Transfers" sub="USDT · newest 20">
             <div style={card}>
               {(data.transfers ?? []).length === 0
                 ? <Empty>No futures transfers recorded.</Empty>
@@ -266,8 +266,8 @@ export function Futures({ privacy }: Props) {
                     <tbody>
                       {(data.transfers ?? []).slice(0, 20).map((t, i) => (
                         <tr key={`${t.ts}-${i}`}>
-                          <td style={td}>{new Date(t.ts).toLocaleDateString()}</td>
-                          <td style={{ ...td, color: signColor(t.amount) }}>{t.amount > 0 ? '+' : ''}{usd(t.amount, privacy)}</td>
+                          <td style={td}>{fmtTs(t.ts)}</td>
+                          <td style={{ ...td, color: signColor(t.amount) }}>{!privacy && t.amount > 0 ? '+' : ''}{usd(t.amount, privacy)}</td>
                           <td style={td}>{t.asset}</td>
                         </tr>
                       ))}
